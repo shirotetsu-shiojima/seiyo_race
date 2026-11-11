@@ -71,6 +71,17 @@ table.rank tr.me td{font-weight:800;color:var(--accent)}
 #touch .chr button{width:22vw;max-width:90px;border-radius:14px}
 #hudbtns{position:absolute;right:10px;top:10px;display:flex;gap:6px;z-index:4}
 #hudbtns button{background:rgba(10,16,26,.6);color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:6px 10px;font:inherit;font-size:12px;cursor:pointer}
+#hudbtns button.hidden{display:none}
+.lobby{margin-top:16px}
+.lobby .top{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+.lobby .top>div{flex:1 1 180px;min-width:0}
+.lobby h3{font-size:13px;color:var(--mute);margin:14px 0 6px;letter-spacing:.05em}
+.rm{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);margin-bottom:6px}
+.rm>div{min-width:0}.rm small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.rmr{display:flex;gap:8px;align-items:center}
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin:12px 0}
+.slot{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);font-size:14px;min-width:0}
+.slot small{display:block;color:var(--mute);font-size:11.5px;margin-top:2px}.slot.empty{color:var(--mute);border-style:dashed;background:transparent}
 </style>
 </head>
 <body>
@@ -113,11 +124,37 @@ table.rank tr.me td{font-weight:800;color:var(--accent)}
           </div>
         </div>
       </div>
+      <div class="card lobby" id="lobbyCard">
+        <h2>オンライン対戦(最大8人・不足はCPUで補充)</h2>
+        <div class="top">
+          <div><label for="netName" style="margin-top:0">プレイヤー名</label><input type="text" id="netName" maxlength="12"></div>
+          <div><label for="netTp" style="margin-top:0">通信方式</label><select id="netTp"><option value="supabase">オンライン(Supabase)</option><option value="local">ローカル(同一ブラウザの別タブ)</option></select></div>
+          <div><button class="go" id="mkRoom" style="margin-top:0">この設定で部屋を作る</button></div>
+        </div>
+        <div class="help" style="margin-top:8px">部屋のコース・難易度・シードは、上の「コース設定」の内容で作られます。</div>
+        <div id="roomList"></div>
+        <div class="help" id="netMsg" style="color:var(--accent)"></div>
+        <div class="help" id="netInfo"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="ui-room" class="screen hidden">
+    <div class="wrap">
+      <div class="card">
+        <h2>対戦ルーム</h2>
+        <h1 id="rmTitle" style="font-size:24px"></h1>
+        <p class="sub" id="rmCourse"></p>
+        <div class="slots" id="rmSlots"></div>
+        <div class="help" id="rmWait"></div>
+        <button class="go" id="rmStart">開始する</button>
+        <button class="btn" id="rmLeave" style="width:100%;margin-top:10px">退出する</button>
+      </div>
     </div>
   </div>
 
   <div id="ui-hud" class="hidden">
-    <div id="hudbtns"><button id="bPause">ポーズ</button><button id="bMute">音 ON</button></div>
+    <div id="hudbtns"><button id="bLeave" class="hidden">退出</button><button id="bPause">ポーズ</button><button id="bMute">音 ON</button></div>
     <div id="laneSel" class="hidden"></div>
     <div id="touch" class="hidden">
       <div class="g nrm"><button data-k="L">◀</button><button data-k="R">▶</button></div>
@@ -158,9 +195,9 @@ const CFG={
   ITEM:{missileDur:.9,near:120,stun:2.2,stunMul:.45,fieldLen:90,fieldT:12,fieldMul:.4,jamT:6,boostT:5,boostAdd:.25},
   AUDIO_OFFSET:0,     // ジョイント音のタイミング補正(秒)。音が遅れて聞こえる環境では負の値にする
   // 難易度: win=判定幅倍率 / cpu=CPUの精度(0〜1) / spd=CPU基本速度倍率 / item=CPUのアイテム使用待ち(秒)
-  DIFF:{easy:{name:'イージー',win:1.35,cpu:[.62,.5,.4],spd:.99,item:[7,8]},
-        normal:{name:'ノーマル',win:1,cpu:[.88,.74,.58],spd:1,item:[3,6]},
-        hard:{name:'ハード',win:.88,cpu:[.97,.9,.82],spd:1.03,item:[2,3]}},
+  DIFF:{easy:{name:'イージー',win:1.35,cpu:[.62,.57,.52,.47,.43,.38,.33],spd:.99,item:[7,8]},
+        normal:{name:'ノーマル',win:1,cpu:[.9,.84,.78,.72,.66,.6,.54],spd:1,item:[3,6]},
+        hard:{name:'ハード',win:.88,cpu:[.98,.95,.92,.89,.86,.83,.8],spd:1.03,item:[2,3]}},
   COOLDOWN:0.35,      // 直前の駅でイベントがあった場合の発生確率係数
   TIER_GAP:[0,3,2,1,1], TIER_VAL:[0,1,1.25,1.6,2.4],
   RAW:'https://raw.githubusercontent.com/shirotetsu-shiojima/seiyo_map/main/',
@@ -355,30 +392,39 @@ function jointTicks(){ // 「ジャンプ頂点がコインに届く時刻」の
   while(C.startS+G.tickK*HB<=look){const strong=G.tickK%2===0;clack(strong);if(strong)G.beatFlash=G.t;G.tickK++}}
 /* ---------- レートシステム(ブラウザに保存) ---------- */
 const RATE_KEY='seiyoRace.rating.v1';
-const RATE={init:1000,base:[10,0,-10,-20],ref:{easy:2000,normal:5000,hard:8000},per:3,cap:20};
+const RATE={init:1000,ref:{easy:2000,normal:5000,hard:8000},per:3,cap:20};
 let RS={rating:RATE.init,games:0,wins:0,best:RATE.init,ok:true};
 function loadRate(){try{const j=JSON.parse(localStorage.getItem(RATE_KEY)||'null');if(j&&typeof j.rating==='number')RS={...RS,rating:j.rating,games:j.games|0,wins:j.wins|0,best:j.best||j.rating}}catch(e){RS.ok=false}}
 function saveRate(){try{localStorage.setItem(RATE_KEY,JSON.stringify({rating:RS.rating,games:RS.games,wins:RS.wins,best:RS.best}));RS.ok=true}catch(e){RS.ok=false}}
 // 難易度補正: 難易度ごとの基準レートとの差1000あたり+3、上下限±20(低レートでハード→プラス、高レートでイージー→マイナス)
 function rateCorr(rating,diff){return clamp(Math.round((RATE.ref[diff]-rating)/1000*RATE.per),-RATE.cap,RATE.cap)}
-function calcRate(place,score,diff,rating){const base=RATE.base[place-1]??-20,tech=Math.floor(score/10000),corr=rateCorr(rating,diff),delta=base+tech+corr;return{base,tech,corr,delta,before:rating,after:Math.max(0,rating+delta)}}
+// 順位の基本値: 1位+10〜最下位-20を人数に応じて等間隔(4人なら +10/0/-10/-20、8人なら +10/+6/+1/-3/-7/-11/-16/-20)
+const rateBase=(place,n)=>Math.round(10-30*(place-1)/Math.max(1,n-1));
+function calcRate(place,score,diff,rating,n){const base=rateBase(place,n||4),tech=Math.floor(score/10000),corr=rateCorr(rating,diff),delta=base+tech+corr;return{base,tech,corr,delta,before:rating,after:Math.max(0,rating+delta)}}
 const sg=n=>(n>0?'+':'')+n;
 const sfx={j:[null,()=>beep(520,.08),()=>beep(660,.08),()=>beep(990,.1,'triangle',.09)],miss:()=>beep(130,.16,'sawtooth',.06,-40),ev:()=>{beep(660,.1);setTimeout(()=>beep(880,.1),90);setTimeout(()=>beep(1320,.16),180)},go:()=>beep(880,.25,'square',.05)};
 
 /* =====================================================================
  *  レース進行
  * ===================================================================== */
-const CPU_DEF=[{n:'CPU-A',c:'#ff5a5a'},{n:'CPU-B',c:'#4aa8ff'},{n:'CPU-C',c:'#7be07b'}];
+const CPU_DEF=[{n:'CPU-A',c:'#ff5a5a'},{n:'CPU-B',c:'#4aa8ff'},{n:'CPU-C',c:'#7be07b'},{n:'CPU-D',c:'#ffb020'},{n:'CPU-E',c:'#c04dff'},{n:'CPU-F',c:'#2ee6c8'},{n:'CPU-G',c:'#ff8fd0'}];
+const MAXP=8; // 1レースの定員(人間+CPU)
+const offlineSlots=()=>[{id:'me',name:'あなた',kind:'human'},...CPU_DEF.map((d,i)=>({id:'cpu'+i,name:d.n,color:d.c,kind:'cpu'}))];
 const DF=()=>CFG.DIFF[G.diff||'normal'];
-function startRace(course,diff){
+function startRace(course,diff,opts){
   G.diff=diff||G.diff||'normal';
-  Object.assign(G,{mode:'race',course,t:0,s:course.startS,v:0,lane:1,lanePos:1,laneT:1,jump:null,jumpCd:0,score:0,combo:0,maxCombo:0,cnt:[0,0,0,0],
+  const slots=opts?opts.slots:offlineSlots(),meIdx=opts?Math.max(0,slots.findIndex(s=>s.id===Net.id)):0;
+  const lane0=k=>[1,2,0,3][k%4],s0=k=>course.startS-Math.floor(k/4)*26; // 8人のスタート隊列(4レーン×2列)
+  Object.assign(G,{mode:'race',course,t:0,s:s0(meIdx),v:0,lane:lane0(meIdx),lanePos:lane0(meIdx),laneT:lane0(meIdx),online:!!opts,startAt:opts?opts.startAt:0,finTime:0,jump:null,jumpCd:0,score:0,combo:0,maxCombo:0,cnt:[0,0,0,0],
     boostA:0,missT:0,itemT:{turbo:0},hitT:0,jam:0,jamEndT:-9,jamSkipped:0,inField:false,fields:[],missiles:[],item:null,roulette:null,win:0,next:0,lock:-1,lsOpen:-1,lsChoice:-1,chart:null,banners:[],pop:null,particles:[],
-    missPtr:0,ver:0,finished:false,paused:false,countdown:4.2,pending:[],judgeStat:null});
+    missPtr:0,ver:0,finished:false,paused:false,countdown:opts?Math.max(.5,(opts.startAt-Date.now())/1000):4.2,pending:[],judgeStat:null});
   course.coins.forEach(c=>{c.state=0});course.coins=course.coins.filter(c=>!c.ls);course.coins.sort((a,b)=>a.s-b.s);
   G.coinsTotal=course.coins.length;
   const rn=mulberry32(course.seed^77);
-  G.cpus=CPU_DEF.map((d,i)=>({...d,a:DF().cpu[i],spd:DF().spd,s:course.startS-(i+1)*14,v:0,lane:i%4,lanePos:i%4,combo:0,boostA:0,missT:0,ptr:0,next:0,perf:0,secPerf:[],fin:null,item:null,useAt:0,boostT:0,hitT:0,jam:0,inField:false,avoid:new Set(),laneT:i%4,r:mulberry32(course.seed^(1000+i)),pts:0}));
+  G.cpus=[];let ci=0;
+  slots.forEach((sl,k)=>{if(k===meIdx)return;const isCpu=sl.kind==='cpu',idx=ci;if(isCpu)ci++;
+    G.cpus.push({id:sl.id,n:sl.name,c:sl.color||'#9aa7b8',remote:!!opts&&(sl.kind==='human'||!Net.isHost),a:isCpu?DF().cpu[idx%DF().cpu.length]:.8,spd:DF().spd,s:s0(k),v:0,lane:lane0(k),lanePos:lane0(k),combo:0,boostA:0,missT:0,ptr:0,next:0,perf:0,secPerf:[],fin:null,item:null,useAt:0,boostT:0,hitT:0,jam:0,inField:false,avoid:new Set(),laneT:lane0(k),r:mulberry32(course.seed^(1000+k)),pts:0,jh:0,net:null})});
+  $('#bLeave').classList.toggle('hidden',!opts);$('#bPause').classList.toggle('hidden',!!opts);
   $('#ui-menu').classList.add('hidden');$('#ui-result').classList.add('hidden');$('#ui-hud').classList.remove('hidden');
   $('#touch').classList.toggle('hidden',!('ontouchstart' in window));$('#touch').classList.remove('chart');
   course.plan.forEach(p=>p.lsDone=false);
@@ -473,7 +519,7 @@ function moveLane(d){
   G.laneT=clamp(Math.round(G.laneT)+d,0,3)}
 /* ---------- アイテム効果(自分='me' / CPUオブジェクト共通) ---------- */
 const sOf=r=>r==='me'?G.s:r.s, laneOf=r=>r==='me'?G.lanePos:r.lanePos;
-function pickItem(){const rank=1+G.cpus.filter(c=>c.s>G.s).length;const w={missile:1+(rank-1)*.4,field:1,shield:1,boost:1+(rank-1)*.3,jam:.8+(rank-1)*.3};
+function pickItem(){const rk=(G.cpus.filter(c=>c.s>G.s).length)/Math.max(1,G.cpus.length)*3;const w={missile:1+rk*.4,field:1,shield:1,boost:1+rk*.3,jam:.8+rk*.3};
   let x=Math.random()*ITEMS.reduce((a,i)=>a+w[i.id],0);for(const i of ITEMS){x-=w[i.id];if(x<=0)return i}return ITEMS[0]}
 function opponents(o){const a=[];if(o!=='me')a.push('me');for(const c of G.cpus)if(c!==o&&c.fin===null)a.push(c);return a}
 function useItem(){
@@ -488,16 +534,20 @@ function useItemFor(o,it){
 function fireMissile(o){
   const opp=opponents(o);if(!opp.length)return;const ld=Math.max(...opp.map(sOf));const tg=opp.filter(r=>sOf(r)>=ld-IT.near);
   for(const t of tg)G.missiles.push({o,t,p:0,done:false});
+  emitAtk('missile',o,tg);
   if(o==='me')banner('ミサイル発射!',tg.length+'台を攻撃(先頭とその近く)','#ff5a3d',1.8);else if(tg.includes('me'))banner('ミサイル接近!','シールドで防げる','#ff5a3d',2);
   beep(300,.25,'sawtooth',.05,500)}
 function dropField(o){
   const f={s0:sOf(o)-IT.fieldLen+10,s1:sOf(o)+10,lane:clamp(Math.round(laneOf(o)),0,3),t:IT.fieldT,owner:o,ignMe:false};G.fields.push(f);
-  for(const c of G.cpus)if(c!==o&&c.r()<c.a*.7)c.avoid.add(f);
+  for(const c of G.cpus)if(!c.remote&&c!==o&&c.r()<c.a*.7)c.avoid.add(f);
+  emitFld(o,f);
   if(o==='me')banner('妨害フィールド設置','レーン'+(f.lane+1)+' を通った相手は大幅減速','#c04dff',1.8);else banner('妨害フィールド注意!','レーン'+(f.lane+1)+' を避けろ','#c04dff',2);beep(180,.2,'square',.05)}
 function jamOthers(o){
   for(const r of opponents(o))hitRacer(r,'jam');
+  emitAtk('jam',o,opponents(o));
   if(o==='me')banner('ジャミング!','相手のレーン変更を'+IT.jamT+'秒封じる','#4cc9ff',1.8)}
 function hitRacer(r,kind){
+  if(r!=='me'&&r.remote)return true; // リモート選手への効果は本人(またはホスト)側で処理。こちらは演出のみ
   const sh=r==='me'?G.item:r.item;
   if(sh&&sh.id==='shield'){if(r==='me'){G.item=null;banner('シールド発動!','攻撃を防いだ','#7be07b',1.8)}else r.item=null;beep(1200,.12,'triangle',.07);return false}
   if(kind==='missile'){if(r==='me'){G.hitT=IT.stun;G.combo=0;banner('被弾!','減速+コンボ切れ','#ff5a3d',1.8);sfx.miss()}else{r.hitT=IT.stun;r.combo=0}}
@@ -522,8 +572,9 @@ function cpuCombat(c,dt){
 /* ---------- 更新 ---------- */
 function update(dt){
   const C=G.course;
-  if(G.countdown>0){const c0=Math.ceil(G.countdown);G.countdown-=dt;if(Math.ceil(G.countdown)!==c0&&G.countdown>0)beep(520,.1);
-    if(G.countdown<=0){G.countdown=0;sfx.go();banner('GO!','','#ffd34d',1)}
+  if(G.finished&&G.online){postFinish(dt);return}
+  if(G.countdown>0){const c0=Math.ceil(G.countdown);G.countdown=G.online?(G.startAt-Date.now())/1000:G.countdown-dt;if(Math.ceil(G.countdown)!==c0&&G.countdown>0)beep(520,.1);
+    if(G.countdown<=0){G.countdown=0;if(G.online)G.t=Math.max(0,Date.now()-G.startAt)/1000;sfx.go();banner('GO!','','#ffd34d',1)}
     // 出発前もレーン選択UIとレーン移動の補間だけは動かす
     stepLane(dt);G.t+=dt*0;return}
   G.t+=dt;
@@ -555,7 +606,8 @@ function update(dt){
   // ルーレット
   if(G.roulette){const R=G.roulette;R.t+=dt;if(!R.res&&R.t>1.3&&!R.full){R.res=pickItem();G.item=R.res;banner(R.res.n+' 獲得','Space で使用',R.res.c,1.8);sfx.ev()}if(R.full&&R.t>1.5)G.roulette=null;if(R.res&&R.t>3)G.roulette=null}
   // CPU
-  for(const c of G.cpus)stepCpu(c,dt);
+  for(const c of G.cpus)c.remote?stepRemote(c,dt):stepCpu(c,dt);
+  netTick();
   // パーティクル
   for(const p of G.particles){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=14*dt;p.z+=p.vz*dt}G.particles=G.particles.filter(p=>p.t<p.life);
   G.banners=G.banners.filter(b=>G.t-b.t0<b.dur)}
@@ -576,7 +628,9 @@ function stepCpu(c,dt){
   if(c.s>=C.goalS){c.fin=G.t-(C.goalS-c.s)/c.v}}
 
 function finish(){
-  G.finished=true;G.mode='finish';const C=G.course;G.myFin=G.t;endSection(C.stations.length-2);
+  G.finished=true;const C=G.course;G.myFin=G.t;endSection(C.stations.length-2);
+  if(G.online){G.finTime=G.t;Net.send({k:'fin',id:Net.id,t:G.myFin,sc:G.score,cnt:G.cnt});banner('GOAL!','全員のゴールを待っています','#ffd34d',4);return}
+  G.mode='finish';
   // 残りのCPUを高速シミュレーションして着順確定
   let guard=0;while(G.cpus.some(c=>c.fin===null)&&guard++<20000){G.t+=.05;for(const c of G.cpus)stepCpu(c,.05)}
   G.t=G.myFin;
@@ -587,8 +641,8 @@ function showResult(all){
   const acc=tot?((G.cnt[3]*1+G.cnt[2]*.8+G.cnt[1]*.5)/tot*100):0;
   const fc=G.cnt[0]===0&&tot>0,ap=fc&&G.cnt[1]===0&&G.cnt[2]===0;
   const rankL=acc>=97?'S':acc>=90?'A':acc>=78?'B':acc>=60?'C':'D';
-  const rr=calcRate(place,G.score,G.diff,RS.rating);RS.rating=rr.after;RS.games++;if(place===1)RS.wins++;RS.best=Math.max(RS.best,RS.rating);saveRate();
-  const fmt=t=>{const m=Math.floor(t/60),s=(t%60).toFixed(2);return m+':'+(s<10?'0':'')+s};
+  const rr=calcRate(place,G.score,G.diff,RS.rating,all.length);RS.rating=rr.after;RS.games++;if(place===1)RS.wins++;RS.best=Math.max(RS.best,RS.rating);saveRate();
+  const fmt=t=>{if(!isFinite(t))return 'DNF';const m=Math.floor(t/60),s=(t%60).toFixed(2);return m+':'+(s<10?'0':'')+s};
   $('#resBody').innerHTML=`<h2 class="res-h">${place}位 <span style="font-size:15px;color:var(--mute);font-weight:600">/ ${all.length}人 ・ ${C.line.name} ・ ${DF().name}</span></h2>
   <table class="rank"><tr><th>順位</th><th>名前</th><th>タイム</th></tr>${all.map((a,i)=>`<tr class="${a.me?'me':''}"><td>${i+1}</td><td><span style="color:${a.c}">●</span> ${a.n}</td><td>${fmt(a.t)}</td></tr>`).join('')}</table>
   <div>${ap?'<span class="medal" style="background:#ffd34d;color:#3a2a00">ALL PERFECT</span>':fc?'<span class="medal" style="background:#4cc9ff;color:#00222e">FULL COMBO</span>':''}<span class="medal" style="background:var(--panel2);border:1px solid var(--line)">評価 ${rankL}</span></div>
@@ -601,7 +655,7 @@ function showResult(all){
   <div class="help">難易度: ${DF().name} / コースID: ${C.line.code}-${C.stations[0].n}→${C.stations[C.stations.length-1].n}-${C.mode} / seed ${C.seed.toString(36)}</div>
   <div class="row2" style="margin-top:12px"><button class="btn" id="rRetry">もう一度</button><button class="btn" id="rMenu">メニューへ</button></div>`;
   $('#ui-result').classList.remove('hidden');$('#touch').classList.add('hidden');$('#laneSel').classList.add('hidden');
-  $('#rRetry').onclick=()=>startRace(G.course);$('#rMenu').onclick=()=>{updRateUI();toMenu()};G.mode='result'}
+  $('#rRetry').onclick=()=>startRace(G.course);$('#rRetry').classList.toggle('hidden',!!G.online);$('#rMenu').onclick=()=>{updRateUI();toMenu()};if(G.online)Net.cleanup();G.mode='result'}
 function toMenu(){G.mode='menu';$('#ui-hud').classList.add('hidden');$('#ui-result').classList.add('hidden');$('#ui-pause').classList.add('hidden');$('#ui-menu').classList.remove('hidden')}
 
 /* =====================================================================
@@ -675,7 +729,7 @@ function drawScene(){
   const coins=C.coins,i0=lowerBound(coins,camS+4);
   for(let i=i0;i<coins.length&&coins[i].s<camS+DRAWD;i++){const c=coins[i];if(c.state===0)items.push({s:c.s,t:'coin',c})}
   C.stations.forEach((S,k)=>{if(S.s>camS-20&&S.s<camS+DRAWD)items.push({s:S.s,t:'sign',S,k})});
-  for(const c of G.cpus)if(c.s>camS+8&&c.s-c.v*0<camS+DRAWD+60)items.push({s:c.s,t:'cpu',c});
+  for(const c of G.cpus)if(!c.dnf&&c.s>camS+8&&c.s-c.v*0<camS+DRAWD+60)items.push({s:c.s,t:'cpu',c});
   // 自機(4両編成。列車増殖中は4レーンに分身)
   for(const f of G.fields)if(f.s1>camS+4&&f.s0<camS+DRAWD)items.push({s:f.s1,t:'field',f});
   for(const m of G.missiles){const os=sOf(m.o),ts=sOf(m.t);items.push({s:os+(ts-os)*m.p,t:'missile',m})}
@@ -749,7 +803,7 @@ function drawItem(it){
     ctx.fillStyle=GRADE_COL[S.grade];ctx.fillRect(top.x-bw/2+2,top.y-bh+2,Math.max(4,bw*.16),bh-4);
     ctx.fillStyle='#16202e';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`800 ${Math.max(8,bh*.5)}px "Hiragino Sans","Noto Sans JP","Noto Sans CJK JP",sans-serif`;ctx.fillText(S.name,top.x+bw*.06,top.y-bh/2,bw*.76);
     ctx.globalAlpha=1;return}
-  if(it.t==='cpu'){const c=it.c;drawTrain(c.s,(c.lanePos-1.5)*LW,0,hex2rgb(c.c),.62,2);shieldRing(c.s-6,(c.lanePos-1.5)*LW,2.2,c.item);return}
+  if(it.t==='cpu'){const c=it.c;drawTrain(c.s,(c.lanePos-1.5)*LW,c.jh||0,hex2rgb(c.c),.62,2);shieldRing(c.s-6,(c.lanePos-1.5)*LW,2.2,c.item);return}
   if(it.t==='field'){const f=it.f,a0=Math.max(f.s0,G.camS+4),a1=Math.min(f.s1,G.camS+DRAWD);if(a1<=a0)return;const c0=(f.lane-1.5)*LW,w=LW/2-.1;
     const pa=posAt(a0,0,0,{}),pb=posAt(a1,0,0,{}),q=(p,l)=>P(p.x+p.rx*l,p.y+.12,p.z+p.rz*l);
     poly([q(pa,c0-w),q(pa,c0+w),q(pb,c0+w),q(pb,c0-w)],`rgba(190,60,255,${.35+.15*Math.sin(G.t*8)})`);
@@ -789,12 +843,13 @@ function drawHUD(){
   // 順位・速度
   const rank=1+G.cpus.filter(c=>c.s>G.s).length;
   rr(W-190*u,56*u,176*u,84*u,12*u,'rgba(8,12,20,.6)');ctx.fillStyle='#ffd34d';ctx.font=font(900,46);ctx.textAlign='left';ctx.fillText(rank,W-176*u,108*u);
-  ctx.font=font(700,16);ctx.fillText('位 / 4',W-136*u,106*u);ctx.fillStyle='#fff';ctx.font=font(700,15);ctx.fillText(Math.round(G.v*3.6)+' km/h',W-176*u,132*u);
+  ctx.font=font(700,16);ctx.fillText('位 / '+(G.cpus.length+1),W-136*u,106*u);ctx.fillStyle='#fff';ctx.font=font(700,15);ctx.fillText(Math.round(G.v*3.6)+' km/h',W-176*u,132*u);
   ctx.font=font(600,12);ctx.fillStyle='#aab';ctx.textAlign='right';ctx.fillText(fmtT(G.t),W-22*u,76*u);ctx.textAlign='left';
+  if(G.online){const ps=Net.tp.room.stats?Net.tp.room.stats():-1;ctx.font=font(600,10);ctx.fillStyle='#8fb';ctx.fillText('ONLINE '+(ps>=0?'P2P '+ps+'/'+Math.max(0,(Net.room?Net.room.players.length-1:0)):'RELAY'),14*u,136*u)}
   // 判定争い
   if(G.judgeStat){const arr=[{n:'あなた',v:G.cnt[3]-G.judgeStat.base,c:'#ffd34d'},...G.cpus.map((c,i)=>({n:c.n,v:c.perf-G.judgeStat.cb[i],c:c.c}))];const mx2=Math.max(5,...arr.map(a=>a.v));
-    rr(W-190*u,146*u,176*u,88*u,10*u,'rgba(8,12,20,.6)');ctx.font=font(700,11);ctx.fillStyle='#ff8a00';ctx.fillText('判定争い PERFECT数',W-180*u,162*u);
-    arr.forEach((a,i)=>{const y=172*u+i*14*u;ctx.fillStyle='#fff';ctx.font=font(600,10);ctx.fillText(a.n,W-180*u,y+8*u);ctx.fillStyle=a.c;ctx.fillRect(W-124*u,y,a.v/mx2*92*u,9*u);ctx.fillStyle='#fff';ctx.fillText(a.v,W-124*u+a.v/mx2*92*u+4*u,y+8*u)})}
+    rr(W-190*u,146*u,176*u,(34+arr.length*12)*u,10*u,'rgba(8,12,20,.6)');ctx.font=font(700,11);ctx.fillStyle='#ff8a00';ctx.fillText('判定争い PERFECT数',W-180*u,162*u);
+    arr.forEach((a,i)=>{const y=172*u+i*12*u;ctx.fillStyle='#fff';ctx.font=font(600,9);ctx.fillText(a.n,W-180*u,y+7*u,52*u);ctx.fillStyle=a.c;ctx.fillRect(W-124*u,y,a.v/mx2*92*u,8*u);ctx.fillStyle='#fff';ctx.fillText(a.v,W-124*u+a.v/mx2*92*u+4*u,y+8*u)})}
   // スコア/コンボ
   rr(14*u,H-92*u,210*u,78*u,12*u,'rgba(8,12,20,.6)');ctx.fillStyle='#aab';ctx.font=font(700,11);ctx.fillText('TECH SCORE',26*u,H-72*u);ctx.fillStyle='#fff';ctx.font=font(800,26);ctx.fillText(G.score.toLocaleString(),26*u,H-46*u);
   ctx.fillStyle='#ffd34d';ctx.font=font(800,14);ctx.fillText('COMBO '+G.combo+'  (MAX '+G.maxCombo+')',26*u,H-24*u);
@@ -835,6 +890,212 @@ function loop(now){
   if(G.course){ctx.setTransform(1,0,0,1,0,0);try{drawScene();drawHUD()}catch(e){console.error(e);window.__err=String(e.stack||e)}}
   requestAnimationFrame(loop)}
 
+
+/* =====================================================================
+ *  オンライン: 通信層 + ロビー/部屋
+ *  Transport 契約(差し替え可能):
+ *    lobby.subscribe(cb)  cb({type:'upsert',rec}|{type:'remove',id}) / lobby.publish(rec) / lobby.remove(id)
+ *    room.open(id,onmsg) / room.send(msg) / room.close()
+ *  いまは BroadcastChannel によるローカル実装(同一ブラウザの別タブ間で動作)。
+ *  Supabase 版は 部屋一覧=rooms テーブル(Realtime)、シグナリング+中継=Realtime Broadcast、ゲーム中=WebRTC DataChannel で同じ契約を実装する。
+ * ===================================================================== */
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rid=()=>Math.random().toString(36).slice(2,8);
+const LocalTransport=(()=>{
+  const L=new BroadcastChannel('seiyo-lobby'),subs=new Set();let mine=null,R=null;
+  L.onmessage=e=>{const m=e.data;if(m.k==='room')subs.forEach(f=>f({type:'upsert',rec:m.rec}));else if(m.k==='gone')subs.forEach(f=>f({type:'remove',id:m.id}));else if(m.k==='who'&&mine)L.postMessage({k:'room',rec:mine})};
+  return {name:'local',
+    lobby:{subscribe(cb){subs.add(cb);L.postMessage({k:'who'});return()=>subs.delete(cb)},publish(rec){mine=rec;L.postMessage({k:'room',rec})},remove(id){if(mine&&mine.id===id){L.postMessage({k:'gone',id});mine=null}}},
+    room:{open(id,on){this.close();R=new BroadcastChannel('seiyo-room:'+id);R.onmessage=e=>on(e.data)},send(m){R&&R.postMessage(m)},close(){if(R){R.close();R=null}}}}})();
+
+/* ---------- WebRTC メッシュ(位置などの高頻度データ用。確立できない相手へはリレーにフォールバック) ---------- */
+class Mesh{
+  constructor(self,sig,onData){this.self=self;this.sig=sig;this.onData=onData;this.pcs=new Map()}
+  ensure(id){
+    if(this.pcs.has(id))return this.pcs.get(id);
+    const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}),rec={pc,dc:null,ice:[]};this.pcs.set(id,rec);
+    pc.onicecandidate=e=>{if(e.candidate)this.sig(id,{c:e.candidate.toJSON()})};
+    pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='closed')rec.dc=null};
+    const bind=dc=>{rec.dc=dc;dc.onmessage=e=>{try{this.onData(JSON.parse(e.data))}catch(err){}};dc.onclose=()=>{if(rec.dc===dc)rec.dc=null}};
+    if(this.self<id){bind(pc.createDataChannel('g',{ordered:false,maxRetransmits:0}));pc.createOffer().then(o=>pc.setLocalDescription(o)).then(()=>this.sig(id,{d:pc.localDescription.toJSON()})).catch(()=>{})}
+    else pc.ondatachannel=e=>bind(e.channel);
+    return rec}
+  async onSignal(from,p){
+    try{const rec=this.ensure(from),pc=rec.pc;
+      if(p.d){await pc.setRemoteDescription(p.d);for(const c of rec.ice.splice(0))await pc.addIceCandidate(c);
+        if(p.d.type==='offer'){const a=await pc.createAnswer();await pc.setLocalDescription(a);this.sig(from,{d:pc.localDescription.toJSON()})}}
+      else if(p.c){if(pc.remoteDescription)await pc.addIceCandidate(p.c);else rec.ice.push(p.c)}}catch(e){console.warn('rtc signal',e)}}
+  sync(ids){for(const id of ids)this.ensure(id);for(const[id,rec]of[...this.pcs])if(!ids.includes(id)){try{rec.pc.close()}catch(e){}this.pcs.delete(id)}}
+  sendAll(str){let n=0;for(const rec of this.pcs.values())if(rec.dc&&rec.dc.readyState==='open'){try{rec.dc.send(str);n++}catch(e){}}return n}
+  openCount(){let n=0;for(const rec of this.pcs.values())if(rec.dc&&rec.dc.readyState==='open')n++;return n}
+  close(){for(const rec of this.pcs.values()){try{rec.pc.close()}catch(e){}}this.pcs.clear()}}
+// 経路: 制御・イベント(join/roster/start/atk/fld/fin…)は信頼できるリレー、位置(state/cpus)はP2P。全員とP2Pが張れていない間は 5Hz でリレーも併用。
+function withMesh(base,useP2P){
+  let on=null,mesh=null,peers=[],lastRelay=0;const GAME=new Set(['state','cpus']);
+  return{
+    open(id,cb){this.close();on=cb;if(useP2P&&window.RTCPeerConnection)mesh=new Mesh(Net.id,(to,p)=>base.send({k:'sig',from:Net.id,to,p}),m=>on(m));
+      base.open(id,m=>{if(m.k==='sig'){if(m.to===Net.id&&mesh)mesh.onSignal(m.from,m.p);return}on(m)})},
+    setPeers(ids){peers=ids.filter(i=>i!==Net.id);if(mesh)mesh.sync(peers)},
+    send(m){if(GAME.has(m.k)&&mesh&&peers.length){const n=mesh.sendAll(JSON.stringify(m));if(n>=peers.length)return;const now=performance.now();if(now-lastRelay<200)return;lastRelay=now}base.send(m)},
+    close(){if(mesh){mesh.close();mesh=null}base.close();peers=[]},
+    stats(){return mesh?mesh.openCount():-1}}}
+const P2P_LOCAL=/[?&]p2p=1/.test(location.search);
+const LocalTr={name:'local',lobby:LocalTransport.lobby,room:withMesh(LocalTransport.room,P2P_LOCAL)};
+
+/* ---------- Supabase Realtime 版 Transport(部屋一覧=Presence、制御/イベント=Broadcast、シグナリング=Broadcast) ---------- */
+const SB={url:'https://inmkykanntysxxgwvxwy.supabase.co',key:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlubWt5a2FubnR5c3h4Z3d2eHd5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQzNzU5MTksImV4cCI6MjEwOTk1MTkxOX0.FUXJBECgVWu_CUZHT9HkaOJ1efiQtcXMrK1fjO7QmZI',lib:'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js'};
+function loadSupabaseLib(){return new Promise((res,rej)=>{
+  if(window.supabase&&window.supabase.createClient)return res(window.supabase);
+  const s=document.createElement('script');s.src=SB.lib;s.onload=()=>window.supabase?res(window.supabase):rej(new Error('lib missing'));s.onerror=()=>rej(new Error('load failed'));document.head.appendChild(s);setTimeout(()=>rej(new Error('timeout')),10000)})}
+function makeSupabaseTransport(sb){
+  const subs=new Set();let lob=null,mine=null,lastJson='',lastTrack=0,known=new Map(),rep=null;
+  const emitAll=()=>{const st=lob?lob.presenceState():{},cur=new Map();
+    for(const k in st){if(k===Net.id)continue;for(const e of st[k])if(e&&e.room&&e.room.id)cur.set(e.room.id,e.room)}
+    for(const rec of cur.values())subs.forEach(f=>f({type:'upsert',rec}));for(const id of known.keys())if(!cur.has(id))subs.forEach(f=>f({type:'remove',id}));known=cur};
+  const track=force=>{if(!lob||!mine)return;const j=JSON.stringify(mine),now=Date.now();if(!force&&(now-lastTrack<2500||(j===lastJson&&now-lastTrack<8000)))return;lastJson=j;lastTrack=now;Promise.resolve(lob.track({room:mine})).catch(()=>{})};
+  const ensureLobby=()=>{if(lob)return;
+    lob=sb.channel('seiyo-lobby',{config:{presence:{key:Net.id}}});lob.on('presence',{event:'sync'},emitAll);
+    lob.subscribe(st=>{if(st==='SUBSCRIBED'){Net.msg='';if(mine)track(true)}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='Supabase に接続できません('+st+')'}renderLobby()});
+    rep=setInterval(emitAll,2000)};
+  return{name:'supabase',
+    lobby:{subscribe(cb){ensureLobby();subs.add(cb);emitAll();return()=>subs.delete(cb)},publish(rec){mine=rec;ensureLobby();track(false)},remove(id){if(mine&&mine.id===id){mine=null;lastJson='';if(lob)Promise.resolve(lob.untrack()).catch(()=>{})}}},
+    room:withMesh({ch:null,q:[],ready:false,
+      open(id,on){this.close();const ch=sb.channel('seiyo-room:'+id,{config:{broadcast:{self:false,ack:false}}});this.ch=ch;
+        ch.on('broadcast',{event:'m'},p=>on(p.payload));
+        ch.subscribe(st=>{if(this.ch!==ch)return;if(st==='SUBSCRIBED'){this.ready=true;for(const m of this.q)ch.send({type:'broadcast',event:'m',payload:m});this.q=[]}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='部屋の通信に失敗しました('+st+')';renderLobby()}})},
+      send(m){if(!this.ch)return;if(!this.ready)this.q.push(m);else this.ch.send({type:'broadcast',event:'m',payload:m})},
+      close(){if(this.ch){try{sb.removeChannel(this.ch)}catch(e){}this.ch=null;this.ready=false;this.q=[]}}},true)}}
+let SBT=null;
+function initialTp(){const q=new URLSearchParams(location.search).get('net');if(q==='local'||q==='supabase')return q;try{const v=localStorage.getItem('seiyoRace.net');if(v==='local'||v==='supabase')return v}catch(e){}return /github\.io$/.test(location.hostname)?'supabase':'local'}
+async function setTransport(name){
+  if(Net.room)Net.leave();if(Net.unsub){Net.unsub();Net.unsub=null}Net.rooms.clear();Net.msg='';
+  if(name==='supabase'){
+    try{if(!SBT){const lib=await loadSupabaseLib();SBT=makeSupabaseTransport(lib.createClient(SB.url,SB.key,{realtime:{params:{eventsPerSecond:20}}}))}Net.tp=SBT}
+    catch(e){console.warn(e);name='local';Net.tp=LocalTr;Net.msg='Supabase に接続できないためローカル通信に切り替えました('+e.message+')'}}
+  else Net.tp=LocalTr;
+  Net.tpName=name;$('#netTp').value=name;try{localStorage.setItem('seiyoRace.net',name)}catch(e){}
+  Net.unsub=Net.tp.lobby.subscribe(Net.onLobby);renderLobby()}
+
+const HCOL=['#ffd34d','#ff7ab6','#5ee0ff','#9cff8a','#ffa14d','#b79bff','#ff6b6b','#7be0c0'];
+const Net={tp:LocalTr,tpName:'local',id:rid()+rid(),name:'',room:null,isHost:false,rooms:new Map(),offset:0,bestRtt:1e9,lastRoster:0,lastSend:0,joining:null,msg:'',tickN:0,unsub:null};
+try{Net.name=localStorage.getItem('seiyoRace.name')||''}catch(e){}
+if(!Net.name)Net.name='Player'+Math.floor(100+Math.random()*900);
+Net.send=m=>{m.from=Net.id;Net.tp.room.send(m)};
+Net.cleanup=()=>{if(Net.isHost&&Net.room)Net.tp.lobby.remove(Net.room.id);Net.tp.room.close();Net.room=null;Net.isHost=false;Net.joining=null};
+Net.leave=()=>{if(Net.room){if(Net.isHost)Net.send({k:'closed'});else Net.send({k:'leave',id:Net.id})}Net.cleanup()};
+const racerById=id=>G.cpus.find(c=>c.id===id);
+
+function courseDesc(){const l=CUR.line,C=CUR.course;if(!l||!C)return null;return{code:l.code,a:+$('#selA').value,b:+$('#selB').value,mode:CUR.mode,seed:$('#seedIn').value,diff:CUR.diff,rev:G.data.rev,line:l.name,from:C.stations[0].name,to:C.stations[C.stations.length-1].name,km:+(C.dist/1000).toFixed(1)}}
+function createRoom(){
+  const cd=courseDesc();if(!cd){Net.msg='先にコース(路線・区間)を設定してください';renderLobby();return}
+  Net.cleanup();const rec={id:rid(),name:Net.name+'の部屋',hostId:Net.id,status:'open',max:MAXP,players:[{id:Net.id,name:Net.name,rating:RS.rating}],course:cd,created:Date.now()};
+  Net.room=rec;Net.isHost=true;Net.lastRoster=Date.now();Net.tp.room.open(rec.id,onRoomMsg);Net.tp.lobby.publish(rec);syncPeers();showRoom()}
+function joinRoom(id){
+  const r=(Net.rooms.get(id)||{}).rec;if(!r||r.status!=='open')return;Net.cleanup();Net.joining=id;Net.msg='参加リクエスト中…';
+  Net.tp.room.open(id,onRoomMsg);Net.send({k:'join',p:{id:Net.id,name:Net.name,rating:RS.rating}});renderLobby();
+  setTimeout(()=>{if(Net.joining===id&&!Net.room){Net.tp.room.close();Net.joining=null;Net.msg='部屋から応答がありません(閉じられた可能性があります)';renderLobby()}},Net.tpName==='supabase'?9000:3000)}
+function syncPeers(){if(Net.room&&Net.tp.room.setPeers)Net.tp.room.setPeers(Net.room.players.map(p=>p.id))}
+function hostBroadcastRoster(){syncPeers();Net.send({k:'roster',room:Net.room});Net.tp.lobby.publish(Net.room)}
+function onRoomMsg(m){
+  if(!m||m.from===Net.id)return;
+  switch(m.k){
+    case'join':if(Net.isHost&&Net.room.status==='open'){const r=Net.room;if(r.players.length>=MAXP){Net.send({k:'deny',to:m.p.id,why:'満員です'})}else{if(!r.players.some(p=>p.id===m.p.id))r.players.push({id:m.p.id,name:String(m.p.name).slice(0,12),rating:m.p.rating|0});hostBroadcastRoster();renderRoom()}}
+      else if(Net.isHost)Net.send({k:'deny',to:m.p.id,why:'すでに開始しています'});break;
+    case'leave':if(G.online){const c=racerById(m.id);if(c&&c.fin===null){c.fin=Infinity;c.dnf=true}}else if(Net.isHost&&Net.room.status==='open'){Net.room.players=Net.room.players.filter(p=>p.id!==m.id);hostBroadcastRoster();renderRoom()}break;
+    case'deny':if(m.to===Net.id){Net.tp.room.close();Net.joining=null;Net.msg='参加できません: '+m.why;renderLobby()}break;
+    case'roster':if(!Net.isHost&&m.room.players.some(p=>p.id===Net.id)){const first=!Net.room;Net.room=m.room;Net.lastRoster=Date.now();Net.joining=null;syncPeers();if(first)showRoom();else renderRoom()}break;
+    case'closed':if(!Net.isHost&&Net.room){Net.msg='ホストが部屋を閉じました';roomLost()}break;
+    case'ping':if(Net.isHost)Net.send({k:'pong',to:m.from,t0:m.t0,th:Date.now()});break;
+    case'pong':if(m.to===Net.id){const now=Date.now(),rtt=now-m.t0;if(rtt<=Net.bestRtt+5){Net.bestRtt=Math.min(Net.bestRtt,rtt);Net.offset=m.th+rtt/2-now}}break;
+    case'start':if(!Net.isHost&&Net.room){Net.room.status='playing';beginOnlineRace(m)}break;
+    case'state':case'cpus':if(G.online)applyNetState(m);break;
+    case'fin':if(G.online){const c=racerById(m.id);if(c&&c.fin===null){c.fin=m.t;c.perf=(m.cnt||[])[3]|0}}break;
+    case'atk':if(G.online)onAtk(m);break;
+    case'fld':if(G.online)onFld(m);break;
+  }}
+function roomLost(){Net.cleanup();$('#ui-room').classList.add('hidden');if(G.online){G.online=false;G.mode='menu';$('#ui-hud').classList.add('hidden');$('#ui-result').classList.add('hidden')}$('#ui-menu').classList.remove('hidden');renderLobby()}
+function hostStart(){
+  const r=Net.room;if(!Net.isHost||!r||r.status!=='open')return;r.status='playing';
+  const slots=r.players.map((p,i)=>({id:p.id,name:p.name,kind:'human',color:HCOL[i%HCOL.length]}));let n=0;
+  while(slots.length<MAXP){const d=CPU_DEF[n%CPU_DEF.length];slots.push({id:'cpu'+n,name:d.n,color:d.c,kind:'cpu'});n++}
+  const rg=mulberry32(hashStr(r.id));for(let i=slots.length-1;i>0;i--){const j=Math.floor(rg()*(i+1));[slots[i],slots[j]]=[slots[j],slots[i]]}
+  const msg={k:'start',startAt:Date.now()+6000,slots,course:r.course};Net.send(msg);Net.tp.lobby.publish(r);beginOnlineRace(msg)}
+function beginOnlineRace(m){
+  const cd=m.course,line=G.data.net.lines.find(l=>l.code===cd.code);let C=null;
+  if(line&&line.nodes.has(cd.a)&&line.nodes.has(cd.b))C=buildCourse(line,cd.a,cd.b,cd.mode,cd.seed);
+  if(!C){Net.msg='コースを再現できません(データ版が違います)';Net.leave();roomLost();return}
+  if(G.data.rev!==cd.rev)console.warn('data rev mismatch',G.data.rev,cd.rev);
+  CUR.line=line;$('#ui-room').classList.add('hidden');
+  startRace(C,cd.diff,{slots:m.slots,startAt:m.startAt-(Net.isHost?0:Net.offset)})}
+function netTick(){
+  if(!G.online)return;const now=performance.now();if(now-Net.lastSend<100)return;Net.lastSend=now;Net.tickN++;
+  if(!G.finished)Net.send({k:'state',id:Net.id,s:+G.s.toFixed(2),v:+G.v.toFixed(2),l:+G.lanePos.toFixed(2),ji:G.jump?+(G.t-G.jump.t0).toFixed(3):-1,item:G.item?G.item.id:null,hit:G.hitT>0?1:0,jam:G.jam>0?1:0,perf:G.cnt[3],sc:G.score});
+  if(Net.isHost){Net.send({k:'cpus',list:G.cpus.filter(c=>!c.remote).map(c=>({id:c.id,s:+c.s.toFixed(2),v:+c.v.toFixed(2),l:+c.lanePos.toFixed(2),item:c.item?c.item.id:null,hit:c.hitT>0?1:0,jam:c.jam>0?1:0,perf:c.perf,fin:c.fin}))});
+    if(Net.tickN%20===0&&Net.room){Net.room.prog=Math.max(0,Math.min(100,Math.round((G.s-G.course.startS)/G.course.dist*100)));Net.tp.lobby.publish(Net.room)}}}
+function applyNetState(m){
+  const list=m.k==='cpus'?m.list:[m];
+  for(const x of list){const c=racerById(x.id);if(!c||!c.remote)continue;
+    c.net={s:x.s,v:x.v,l:x.l,ji:x.ji===undefined?-1:x.ji,rt:performance.now()};c.item=x.item?ITEMS.find(i=>i.id===x.item):null;c.hitT=x.hit?1:0;c.jamFlag=x.jam;c.perf=x.perf|0;
+    if(x.fin!=null&&c.fin===null)c.fin=x.fin}}
+function stepRemote(c,dt){
+  const n=c.net;if(!n)return;if(c.fin!==null){if(!c.dnf)c.s=Math.max(c.s,G.course.goalS);c.v=0;return}
+  const age=Math.max(0,Math.min(.6,(performance.now()-n.rt)/1000)),pred=n.s+n.v*age;
+  if(Math.abs(pred-c.s)>80)c.s=pred;else c.s+=(pred-c.s)*Math.min(1,dt*10);c.v=n.v;
+  const d=n.l-c.lanePos,st=7*dt;c.lanePos=Math.abs(d)<=st?n.l:c.lanePos+Math.sign(d)*st;
+  const ji=n.ji>=0?n.ji+age:-1;c.jh=ji>=0&&ji<CFG.JUMP_SEC?Math.sin(ji/CFG.JUMP_SEC*Math.PI)*CFG.JUMP_H:0}
+function emitAtk(kind,o,tgs){
+  if(!G.online)return;const from=o==='me'?Net.id:(o.remote?null:o.id);if(!from)return;
+  Net.send({k:'atk',kind,from,to:tgs.map(r=>r==='me'?Net.id:r.id)})}
+function emitFld(o,f){
+  if(!G.online)return;const from=o==='me'?Net.id:(o.remote?null:o.id);if(!from)return;
+  Net.send({k:'fld',from,s0:f.s0,s1:f.s1,lane:f.lane,t:f.t})}
+function onAtk(m){
+  const owner=racerById(m.from);if(!owner)return;const tgs=m.to.map(id=>id===Net.id?'me':racerById(id)).filter(Boolean);
+  if(m.kind==='missile'){for(const t of tgs)G.missiles.push({o:owner,t,p:0,done:false});if(tgs.includes('me'))banner('ミサイル接近!',owner.n+'から攻撃 / シールドで防げる','#ff5a3d',2)}
+  else if(m.kind==='jam'){for(const t of tgs)hitRacer(t,'jam')}}
+function onFld(m){
+  const owner=racerById(m.from);if(!owner)return;const f={s0:m.s0,s1:m.s1,lane:m.lane,t:m.t,owner,ignMe:false};G.fields.push(f);
+  for(const c of G.cpus)if(!c.remote&&c!==owner&&c.r()<c.a*.7)c.avoid.add(f);
+  banner('妨害フィールド注意!',owner.n+' / レーン'+(f.lane+1)+' を避けろ','#c04dff',2)}
+function postFinish(dt){ // 自分のゴール後: 他の選手の完走を待つ(ホストはCPUのシミュレーションも継続)
+  G.t+=dt;for(const c of G.cpus)c.remote?stepRemote(c,dt):stepCpu(c,dt);netTick();
+  for(const p of G.particles){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=14*dt;p.z+=p.vz*dt}G.particles=G.particles.filter(p=>p.t<p.life);G.banners=G.banners.filter(b=>G.t-b.t0<b.dur);
+  const done=G.cpus.every(c=>c.fin!==null),timeout=G.t-G.finTime>40;
+  if(done||timeout){if(Net.isHost){Net.lastSend=0;netTick()}G.mode='result';G.finished=true;
+    const all=[{n:'あなた',c:'#ffd34d',t:G.myFin,me:true},...G.cpus.map(c=>({n:c.n,c:c.c,t:c.fin===null?Infinity:c.fin,s:c.s}))].sort((a,b)=>a.t-b.t||(b.s||0)-(a.s||0));
+    showResult(all)}}
+
+/* ---------- ロビー/部屋 UI ---------- */
+function renderLobby(){
+  const now=Date.now();for(const[id,r]of Net.rooms)if(now-r.seen>5000)Net.rooms.delete(id);
+  const el=$('#roomList');if(!el)return;const arr=[...Net.rooms.values()].map(x=>x.rec).sort((a,b)=>b.created-a.created);
+  const row=(r,join)=>`<div class="rm"><div><b>${esc(r.name)}</b><small>${esc(r.course.line)} ${esc(r.course.from)}→${esc(r.course.to)} ・ ${r.course.km}km ・ ${esc(CFG.DIFF[r.course.diff].name)}</small></div><div class="rmr"><span class="chip">${r.players.length}/${r.max}人${r.status==='playing'&&r.prog!=null?' ・ 進行'+r.prog+'%':''}</span>${join?`<button class="btn" data-join="${esc(r.id)}"${r.players.length>=r.max?' disabled':''}>参加</button>`:'<span class="chip">観戦は未対応</span>'}</div></div>`;
+  const op=arr.filter(r=>r.status==='open'),pl=arr.filter(r=>r.status==='playing');
+  el.innerHTML=`<h3>募集中(${op.length})</h3>${op.map(r=>row(r,true)).join('')||'<div class="help">募集中の部屋はありません</div>'}<h3>対戦中(${pl.length})</h3>${pl.map(r=>row(r,false)).join('')||'<div class="help">対戦中の部屋はありません</div>'}`;
+  $('#netMsg').textContent=Net.msg||'';$('#netInfo').textContent='通信: '+(Net.tpName==='supabase'?'Supabase Realtime(部屋一覧・制御)+ WebRTC P2P(位置)':'ローカル(同一ブラウザの別タブ間)')}
+function showRoom(){$('#ui-menu').classList.add('hidden');$('#ui-room').classList.remove('hidden');renderRoom()}
+function renderRoom(){
+  const r=Net.room;if(!r)return;const c=r.course;
+  $('#rmTitle').textContent=r.name;$('#rmCourse').textContent=`${c.line} ${c.from}→${c.to}(${c.km}km) ・ ${CFG.DIFF[c.diff].name} ・ シード ${c.seed}`;
+  let h='';for(let i=0;i<MAXP;i++){const p=r.players[i];h+=p?`<div class="slot"><span style="color:${HCOL[i%HCOL.length]}">●</span> <b>${esc(p.name)}</b>${p.id===r.hostId?' <span class="chip">ホスト</span>':''}${p.id===Net.id?' <span class="chip">あなた</span>':''}<small>レート ${p.rating}</small></div>`:`<div class="slot empty">空き(開始時に CPU で補充)</div>`}
+  $('#rmSlots').innerHTML=h;const cpus=MAXP-r.players.length;
+  $('#rmStart').classList.toggle('hidden',!Net.isHost);$('#rmStart').textContent=cpus>0?`開始する(あと${cpus}人は CPU で補充)`:'開始する';
+  const ps=Net.tp.room.stats?Net.tp.room.stats():-1;
+  $('#rmWait').textContent=(Net.isHost?'ホストの判断でいつでも開始できます。':'ホストが開始するのを待っています…')+(ps>=0?`  P2P接続 ${ps}/${r.players.length-1}`:'')}
+function initLobby(){
+  Net.onLobby=e=>{if(e.type==='upsert')Net.rooms.set(e.rec.id,{rec:e.rec,seen:Date.now()});else Net.rooms.delete(e.id);if(!$('#ui-menu').classList.contains('hidden'))renderLobby()};
+  $('#netTp').onchange=e=>setTransport(e.target.value);setTransport(initialTp());
+  $('#netName').value=Net.name;$('#netName').oninput=e=>{Net.name=e.target.value.replace(/[<>]/g,'').slice(0,12)||'Player';try{localStorage.setItem('seiyoRace.name',Net.name)}catch(err){}};
+  $('#roomList').onclick=e=>{const b=e.target.closest('[data-join]');if(b)joinRoom(b.dataset.join)};
+  $('#mkRoom').onclick=createRoom;$('#rmStart').onclick=hostStart;
+  $('#rmLeave').onclick=()=>{Net.leave();$('#ui-room').classList.add('hidden');$('#ui-menu').classList.remove('hidden');Net.msg='';renderLobby()};
+  setInterval(()=>{
+    if(!$('#ui-menu').classList.contains('hidden'))renderLobby();
+    if(Net.room&&Net.isHost&&Net.room.status==='open'){hostBroadcastRoster()}
+    if(Net.room&&!Net.isHost&&Net.room.status==='open'){Net.send({k:'ping',t0:Date.now()});if(Date.now()-Net.lastRoster>6000){Net.msg='ホストとの接続が切れました';roomLost()}}
+  },1000);
+  renderLobby()}
+
 /* =====================================================================
  *  入力
  * ===================================================================== */
@@ -850,8 +1111,8 @@ addEventListener('keydown',e=>{
     else if('dfjkDFJK'.includes(k)&&k.length===1){chartHit('dfjk'.indexOf(k.toLowerCase()))}
     else if('1234'.includes(k)&&k.length===1){chooseLane(+k-1)}}
   else if(k==='Escape'&&G.paused)setPause(false)});
-function setPause(p){if(G.mode!=='race')return;G.paused=p;$('#ui-pause').classList.toggle('hidden',!p);if(!p)G.last=performance.now()}
-$('#bPause').onclick=()=>setPause(true);$('#bResume').onclick=()=>setPause(false);$('#bQuit').onclick=()=>{G.paused=false;toMenu()};
+function setPause(p){if(G.mode!=='race'||G.online)return;G.paused=p;$('#ui-pause').classList.toggle('hidden',!p);if(!p)G.last=performance.now()}
+$('#bPause').onclick=()=>setPause(true);$('#bLeave').onclick=()=>{Net.leave();G.finished=true;G.mode='menu';G.online=false;toMenu()};$('#bResume').onclick=()=>setPause(false);$('#bQuit').onclick=()=>{G.paused=false;toMenu()};
 $('#bMute').onclick=e=>{G.muted=!G.muted;e.target.textContent=G.muted?'音 OFF':'音 ON'};
 document.querySelectorAll('#touch button').forEach(b=>{const h=e=>{e.preventDefault();const k=b.dataset.k;if(k==='L')moveLane(-1);else if(k==='R')moveLane(1);else if(k==='U')doJump();else if(k==='I')useItem();else if(b.dataset.c!==undefined)chartHit(+b.dataset.c)};b.addEventListener('touchstart',h,{passive:false});b.addEventListener('mousedown',h)});
 
@@ -905,7 +1166,7 @@ async function init(live=true){
   chip.className='chip '+(G.data.src==='live'?'live':'snap');
   chip.lastChild.textContent=(G.data.src==='live'?'GitHub連携: 最新 ':'オフライン: 同梱スナップショット ')+'(rev '+G.data.rev+' / '+n+'路線)';
   const keep=CUR.line&&CUR.line.code;renderLines();const l=G.data.net.lines.find(x=>x.code===keep)||G.data.net.lines[0];if(l)pickLine(l)}
-$('#reload').onclick=()=>init(true);updRateUI();
+$('#reload').onclick=()=>init(true);updRateUI();initLobby();
 init(true);
 
 // テスト・拡張用フック(オンライン対戦の同期処理などはここから接続する想定)
