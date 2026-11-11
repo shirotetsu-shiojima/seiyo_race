@@ -298,6 +298,7 @@ function findRoute(line,na,nb,mode){
 function buildCourse(line,na,nb,mode,userSeed){
   const es=findRoute(line,na,nb,mode);if(!es)return null;
   const seed=hashStr([line.code,na,nb,mode,userSeed].join('|'));
+  BEAT=BGM_SYNC_SPEED*60/BGM_TRACKS[seed%3].bpm;
   // --- 線形 ---
   const parts=es.map(e=>roundCorners(e.sec.pts,42));
   const f0=parts[0],d0=[f0[1][0]-f0[0][0],f0[1][2]-f0[0][2]],l0=Math.hypot(...d0)||1;
@@ -321,7 +322,9 @@ function buildCourse(line,na,nb,mode,userSeed){
   course.dist=course.goalS-course.startS;
   generate(course);return course}
 
-const BEAT=CFG.VNOM*CFG.BEAT_SEC;
+const BGM_SYNC_SPEED=160/3.6; // 160 km/h を等倍再生の基準にする
+const BGM_TRACKS=[{name:'昼',src:'bgm/day.mp3',bpm:174},{name:'夕方',src:'bgm/sunset.mp3',bpm:176},{name:'夜',src:'bgm/night.mp3',bpm:160}];
+let BEAT=CFG.VNOM*CFG.BEAT_SEC;
 function pickLane(r,cur,w){ // 次のレーンを近傍重視でランダム選択
   const x=r();let d=x<.4?0:x<.78?(r()<.5?-1:1):(r()<.5?-2:2);let l=cur+d;if(l<0||l>3)l=clamp(cur-d,0,3);return clamp(l,0,3)}
 function coinsStandard(r,a,b,gap,lane,kind,val){const o=[];let s=a,l=lane;while(s<=b){o.push({s,lane:l,kind,val,state:0});s+=gap*BEAT;l=pickLane(r,l)}return o}
@@ -381,6 +384,9 @@ const G={mode:'menu',data:null,course:null,line:null,lineSel:null,
 let AC=null;function beep(f,d=.08,type='sine',vol=.07,slide=0){if(G.muted)return;try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();
   const o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;if(slide)o.frequency.linearRampToValueAtTime(f+slide,AC.currentTime+d);
   g.gain.value=vol;g.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+d)}catch(e){}}
+let bgm=null;
+function syncBgm(){if(!G.course)return;if(!bgm){bgm=new Audio();bgm.preload='auto';bgm.loop=true}const track=BGM_TRACKS[G.course.seed%3];if(bgm.dataset.track!==track.src){bgm.pause();bgm.src=track.src;bgm.dataset.track=track.src;bgm.currentTime=0;bgm.load()}bgm.playbackRate=clamp((G.v||BGM_SYNC_SPEED)/BGM_SYNC_SPEED,.75,1.35);bgm.volume=G.muted?0:.35;if(G.mode==='race'&&!G.paused){const p=bgm.play();if(p&&p.catch)p.catch(()=>{})}}
+function stopBgm(){if(bgm){bgm.pause();bgm.currentTime=0}}
 let NB=null;
 function clack(strong){ // 継ぎ目を踏む「ガタン」。強拍は2連(前後の台車)、裏拍は軽く1回
   if(G.muted||!AC)return;try{const t0=AC.currentTime;if(!NB){NB=AC.createBuffer(1,AC.sampleRate*.1|0,AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}
@@ -429,7 +435,7 @@ function startRace(course,diff,opts){
   $('#touch').classList.toggle('hidden',!('ontouchstart' in window));$('#touch').classList.remove('chart');
   course.plan.forEach(p=>p.lsDone=false);
   try{AC=AC||new (window.AudioContext||window.webkitAudioContext)();AC.resume()}catch(e){}
-  G.tickK=4;G.beatFlash=-9;
+  syncBgm();G.tickK=4;G.beatFlash=-9;
   // 出発駅のイベントを即時適用
   openStation(0,true);G.last=performance.now();if(!G.loopOn){G.loopOn=true;requestAnimationFrame(loop)}}
 
@@ -572,6 +578,7 @@ function cpuCombat(c,dt){
 /* ---------- 更新 ---------- */
 function update(dt){
   const C=G.course;
+  syncBgm();
   if(G.finished&&G.online){postFinish(dt);return}
   if(G.countdown>0){const c0=Math.ceil(G.countdown);G.countdown=G.online?(G.startAt-Date.now())/1000:G.countdown-dt;if(Math.ceil(G.countdown)!==c0&&G.countdown>0)beep(520,.1);
     if(G.countdown<=0){G.countdown=0;if(G.online)G.t=Math.max(0,Date.now()-G.startAt)/1000;sfx.go();banner('GO!','','#ffd34d',1)}
@@ -630,7 +637,7 @@ function stepCpu(c,dt){
 function finish(){
   G.finished=true;const C=G.course;G.myFin=G.t;endSection(C.stations.length-2);
   if(G.online){G.finTime=G.t;Net.send({k:'fin',id:Net.id,t:G.myFin,sc:G.score,cnt:G.cnt});banner('GOAL!','全員のゴールを待っています','#ffd34d',4);return}
-  G.mode='finish';
+  stopBgm();G.mode='finish';
   // 残りのCPUを高速シミュレーションして着順確定
   let guard=0;while(G.cpus.some(c=>c.fin===null)&&guard++<20000){G.t+=.05;for(const c of G.cpus)stepCpu(c,.05)}
   G.t=G.myFin;
@@ -656,7 +663,7 @@ function showResult(all){
   <div class="row2" style="margin-top:12px"><button class="btn" id="rRetry">もう一度</button><button class="btn" id="rMenu">メニューへ</button></div>`;
   $('#ui-result').classList.remove('hidden');$('#touch').classList.add('hidden');$('#laneSel').classList.add('hidden');
   $('#rRetry').onclick=()=>startRace(G.course);$('#rRetry').classList.toggle('hidden',!!G.online);$('#rMenu').onclick=()=>{updRateUI();toMenu()};if(G.online)Net.cleanup();G.mode='result'}
-function toMenu(){G.mode='menu';$('#ui-hud').classList.add('hidden');$('#ui-result').classList.add('hidden');$('#ui-pause').classList.add('hidden');$('#ui-menu').classList.remove('hidden')}
+function toMenu(){stopBgm();G.mode='menu';$('#ui-hud').classList.add('hidden');$('#ui-result').classList.add('hidden');$('#ui-pause').classList.add('hidden');$('#ui-menu').classList.remove('hidden')}
 
 /* =====================================================================
  *  3D 描画(Canvas2D による自前の透視投影・ペインターズアルゴリズム)
@@ -1064,7 +1071,7 @@ function postFinish(dt){ // 自分のゴール後: 他の選手の完走を待�
   G.t+=dt;for(const c of G.cpus)c.remote?stepRemote(c,dt):stepCpu(c,dt);netTick();
   for(const p of G.particles){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=14*dt;p.z+=p.vz*dt}G.particles=G.particles.filter(p=>p.t<p.life);G.banners=G.banners.filter(b=>G.t-b.t0<b.dur);
   const done=G.cpus.every(c=>c.fin!==null),timeout=G.t-G.finTime>40;
-  if(done||timeout){if(Net.isHost){Net.lastSend=0;netTick()}G.mode='result';G.finished=true;
+  if(done||timeout){stopBgm();if(Net.isHost){Net.lastSend=0;netTick()}G.mode='result';G.finished=true;
     const all=[{n:'あなた',c:'#ffd34d',t:G.myFin,me:true},...G.cpus.map(c=>({n:c.n,c:c.c,t:c.fin===null?Infinity:c.fin,s:c.s}))].sort((a,b)=>a.t-b.t||(b.s||0)-(a.s||0));
     showResult(all)}}
 
@@ -1114,7 +1121,7 @@ addEventListener('keydown',e=>{
     else if('dfjkDFJK'.includes(k)&&k.length===1){chartHit('dfjk'.indexOf(k.toLowerCase()))}
     else if('1234'.includes(k)&&k.length===1){chooseLane(+k-1)}}
   else if(k==='Escape'&&G.paused)setPause(false)});
-function setPause(p){if(G.mode!=='race'||G.online)return;G.paused=p;$('#ui-pause').classList.toggle('hidden',!p);if(!p)G.last=performance.now()}
+function setPause(p){if(G.mode!=='race'||G.online)return;G.paused=p;$('#ui-pause').classList.toggle('hidden',!p);if(p&&bgm)bgm.pause();if(!p){G.last=performance.now();syncBgm()}}
 $('#bPause').onclick=()=>setPause(true);$('#bLeave').onclick=()=>{Net.leave();G.finished=true;G.mode='menu';G.online=false;toMenu()};$('#bResume').onclick=()=>setPause(false);$('#bQuit').onclick=()=>{G.paused=false;toMenu()};
 $('#bMute').onclick=e=>{G.muted=!G.muted;e.target.textContent=G.muted?'音 OFF':'音 ON'};
 document.querySelectorAll('#touch button').forEach(b=>{const h=e=>{e.preventDefault();const k=b.dataset.k;if(k==='L')moveLane(-1);else if(k==='R')moveLane(1);else if(k==='U')doJump();else if(k==='I')useItem();else if(b.dataset.c!==undefined)chartHit(+b.dataset.c)};b.addEventListener('touchstart',h,{passive:false});b.addEventListener('mousedown',h)});
