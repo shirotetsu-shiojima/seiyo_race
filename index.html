@@ -948,15 +948,15 @@ function loadSupabaseLib(){return new Promise((res,rej)=>{
   if(window.supabase&&window.supabase.createClient)return res(window.supabase);
   const s=document.createElement('script');s.src=SB.lib;s.onload=()=>window.supabase?res(window.supabase):rej(new Error('lib missing'));s.onerror=()=>rej(new Error('load failed'));document.head.appendChild(s);setTimeout(()=>rej(new Error('timeout')),10000)})}
 function makeSupabaseTransport(sb){
-  const subs=new Set();let lob=null,mine=null,lastJson='',lastTrack=0,known=new Map(),rep=null;
-  const emitAll=()=>{const st=lob?lob.presenceState():{},cur=new Map();
+  const subs=new Set();window.SBDIAG={st:'未接続',n:0,err:''};let lob=null,mine=null,lastJson='',lastTrack=0,known=new Map(),rep=null;
+  const emitAll=()=>{const st=lob?lob.presenceState():{},cur=new Map();SBDIAG.n=Object.keys(st).length;
     for(const k in st){if(k===Net.id)continue;for(const e of st[k])if(e&&e.room&&e.room.id)cur.set(e.room.id,e.room)}
     for(const rec of cur.values())subs.forEach(f=>f({type:'upsert',rec}));for(const id of known.keys())if(!cur.has(id))subs.forEach(f=>f({type:'remove',id}));known=cur};
-  const track=force=>{if(!lob||!mine)return;const j=JSON.stringify(mine),now=Date.now();if(!force&&(now-lastTrack<2500||(j===lastJson&&now-lastTrack<8000)))return;lastJson=j;lastTrack=now;Promise.resolve(lob.track({room:mine})).catch(()=>{})};
+  const track=force=>{if(!lob||!mine)return;const j=JSON.stringify(mine),now=Date.now();if(!force&&(now-lastTrack<2500||(j===lastJson&&now-lastTrack<8000)))return;lastJson=j;lastTrack=now;Promise.resolve(lob.track({room:mine})).then(r=>{SBDIAG.track=r;console.log('[track]',r)}).catch(e=>{SBDIAG.err='track:'+e;console.warn(e)})};
   const ensureLobby=()=>{if(lob)return;
     lob=sb.channel('seiyo-lobby',{config:{presence:{key:Net.id}}});lob.on('presence',{event:'sync'},emitAll);
-    lob.subscribe(st=>{if(st==='SUBSCRIBED'){Net.msg='';if(mine)track(true)}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='Supabase に接続できません('+st+')'}renderLobby()});
-    rep=setInterval(emitAll,2000)};
+    lob.subscribe((st,err)=>{SBDIAG.st=st;if(err)SBDIAG.err=String(err.message||err);console.log('[lobby]',st,err||'');if(st==='SUBSCRIBED'){Net.msg='';if(mine)track(true)}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='Supabase に接続できません('+st+')'}renderLobby()});
+    rep=setInterval(()=>{emitAll();renderLobby()},2000)};
   return{name:'supabase',
     lobby:{subscribe(cb){ensureLobby();subs.add(cb);emitAll();return()=>subs.delete(cb)},publish(rec){mine=rec;ensureLobby();track(false)},remove(id){if(mine&&mine.id===id){mine=null;lastJson='';if(lob)Promise.resolve(lob.untrack()).catch(()=>{})}}},
     room:withMesh({ch:null,q:[],ready:false,
@@ -1072,7 +1072,7 @@ function renderLobby(){
   const row=(r,join)=>`<div class="rm"><div><b>${esc(r.name)}</b><small>${esc(r.course.line)} ${esc(r.course.from)}→${esc(r.course.to)} ・ ${r.course.km}km ・ ${esc(CFG.DIFF[r.course.diff].name)}</small></div><div class="rmr"><span class="chip">${r.players.length}/${r.max}人${r.status==='playing'&&r.prog!=null?' ・ 進行'+r.prog+'%':''}</span>${join?`<button class="btn" data-join="${esc(r.id)}"${r.players.length>=r.max?' disabled':''}>参加</button>`:'<span class="chip">観戦は未対応</span>'}</div></div>`;
   const op=arr.filter(r=>r.status==='open'),pl=arr.filter(r=>r.status==='playing');
   el.innerHTML=`<h3>募集中(${op.length})</h3>${op.map(r=>row(r,true)).join('')||'<div class="help">募集中の部屋はありません</div>'}<h3>対戦中(${pl.length})</h3>${pl.map(r=>row(r,false)).join('')||'<div class="help">対戦中の部屋はありません</div>'}`;
-  $('#netMsg').textContent=Net.msg||'';$('#netInfo').textContent='通信: '+(Net.tpName==='supabase'?'Supabase Realtime(部屋一覧・制御)+ WebRTC P2P(位置)':'ローカル(同一ブラウザの別タブ間)')}
+  $('#netMsg').textContent=Net.msg||'';$('#netInfo').textContent='通信: '+(Net.tpName==='supabase'?'Supabase Realtime(部屋一覧・制御)+ WebRTC P2P(位置)  [lobby: '+SBDIAG.st+' / 在室 '+SBDIAG.n+(SBDIAG.err?' / '+SBDIAG.err:'')+']':'ローカル(同一ブラウザの別タブ間)')}
 function showRoom(){$('#ui-menu').classList.add('hidden');$('#ui-room').classList.remove('hidden');renderRoom()}
 function renderRoom(){
   const r=Net.room;if(!r)return;const c=r.course;
