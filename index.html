@@ -323,7 +323,7 @@ function buildCourse(line,na,nb,mode,userSeed){
   generate(course);return course}
 
 const BGM_SYNC_SPEED=160/3.6; // 160 km/h を等倍再生の基準にする
-const BGM_TRACKS=[{name:'昼',src:'bgm/day.mp3',bpm:174},{name:'夕方',src:'bgm/sunset.mp3',bpm:176},{name:'夜',src:'bgm/night.mp3',bpm:160}];
+const BGM_TRACKS=[{name:'昼',src:'bgm/day.mp3',bpm:87},{name:'夕方',src:'bgm/sunset.mp3',bpm:88},{name:'夜',src:'bgm/night.mp3',bpm:80}];
 let BEAT=CFG.VNOM*CFG.BEAT_SEC;
 function pickLane(r,cur,w){ // 次のレーンを近傍重視でランダム選択
   const x=r();let d=x<.4?0:x<.78?(r()<.5?-1:1):(r()<.5?-2:2);let l=cur+d;if(l<0||l>3)l=clamp(cur-d,0,3);return clamp(l,0,3)}
