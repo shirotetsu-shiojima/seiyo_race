@@ -948,17 +948,20 @@ function loadSupabaseLib(){return new Promise((res,rej)=>{
   if(window.supabase&&window.supabase.createClient)return res(window.supabase);
   const s=document.createElement('script');s.src=SB.lib;s.onload=()=>window.supabase?res(window.supabase):rej(new Error('lib missing'));s.onerror=()=>rej(new Error('load failed'));document.head.appendChild(s);setTimeout(()=>rej(new Error('timeout')),10000)})}
 function makeSupabaseTransport(sb){
-  const subs=new Set();window.SBDIAG={st:'未接続',n:0,err:''};let lob=null,mine=null,lastJson='',lastTrack=0,known=new Map(),rep=null;
+  const subs=new Set();window.SBDIAG={st:'未接続',n:0,err:''};let lobOk=false,lob=null,mine=null,lastJson='',lastTrack=0,known=new Map(),rep=null;
   const emitAll=()=>{const st=lob?lob.presenceState():{},cur=new Map();SBDIAG.n=Object.keys(st).length;
     for(const k in st){if(k===Net.id)continue;for(const e of st[k])if(e&&e.room&&e.room.id)cur.set(e.room.id,e.room)}
     for(const rec of cur.values())subs.forEach(f=>f({type:'upsert',rec}));for(const id of known.keys())if(!cur.has(id))subs.forEach(f=>f({type:'remove',id}));known=cur};
   const track=force=>{if(!lob||!mine)return;const j=JSON.stringify(mine),now=Date.now();if(!force&&(now-lastTrack<2500||(j===lastJson&&now-lastTrack<8000)))return;lastJson=j;lastTrack=now;Promise.resolve(lob.track({room:mine})).then(r=>{SBDIAG.track=r;console.log('[track]',r)}).catch(e=>{SBDIAG.err='track:'+e;console.warn(e)})};
+  const bcast=()=>{if(lob&&lobOk&&mine)Promise.resolve(lob.send({type:'broadcast',event:'room',payload:mine})).catch(()=>{})};
   const ensureLobby=()=>{if(lob)return;
-    lob=sb.channel('seiyo-lobby',{config:{presence:{key:Net.id}}});lob.on('presence',{event:'sync'},emitAll);
-    lob.subscribe((st,err)=>{SBDIAG.st=st;if(err)SBDIAG.err=String(err.message||err);console.log('[lobby]',st,err||'');if(st==='SUBSCRIBED'){Net.msg='';if(mine)track(true)}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='Supabase に接続できません('+st+')'}renderLobby()});
-    rep=setInterval(()=>{emitAll();renderLobby()},2000)};
+    lob=sb.channel('seiyo-lobby',{config:{presence:{key:Net.id,enabled:true},broadcast:{self:false}}});lob.on('presence',{event:'sync'},emitAll);
+    lob.on('broadcast',{event:'room'},p=>{if(p.payload&&p.payload.id)subs.forEach(f=>f({type:'upsert',rec:p.payload}))});
+    lob.on('broadcast',{event:'gone'},p=>subs.forEach(f=>f({type:'remove',id:p.payload&&p.payload.id})));
+    lob.subscribe((st,err)=>{SBDIAG.st=st;if(err)SBDIAG.err=String(err.message||err);console.log('[lobby]',st,err||'');if(st==='SUBSCRIBED'){lobOk=true;Net.msg='';if(mine){track(true);bcast()}}else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'){Net.msg='Supabase に接続できません('+st+')'}renderLobby()});
+    rep=setInterval(()=>{emitAll();bcast();renderLobby()},2000)};
   return{name:'supabase',
-    lobby:{subscribe(cb){ensureLobby();subs.add(cb);emitAll();return()=>subs.delete(cb)},publish(rec){mine=rec;ensureLobby();track(false)},remove(id){if(mine&&mine.id===id){mine=null;lastJson='';if(lob)Promise.resolve(lob.untrack()).catch(()=>{})}}},
+    lobby:{subscribe(cb){ensureLobby();subs.add(cb);emitAll();return()=>subs.delete(cb)},publish(rec){mine=rec;ensureLobby();track(false);bcast()},remove(id){if(mine&&mine.id===id){if(lob&&lobOk)Promise.resolve(lob.send({type:'broadcast',event:'gone',payload:{id}})).catch(()=>{});mine=null;lastJson='';if(lob)Promise.resolve(lob.untrack()).catch(()=>{})}}},
     room:withMesh({ch:null,q:[],ready:false,
       open(id,on){this.close();const ch=sb.channel('seiyo-room:'+id,{config:{broadcast:{self:false,ack:false}}});this.ch=ch;
         ch.on('broadcast',{event:'m'},p=>on(p.payload));
