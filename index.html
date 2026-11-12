@@ -225,10 +225,12 @@ const CFG={
   },
   ITEM:{missileDur:.9,near:120,stun:2.2,stunMul:.45,fieldLen:90,fieldT:12,fieldMul:.4,jamT:6,boostT:5,boostAdd:.25},
   AUDIO_OFFSET:0,     // ジョイント音のタイミング補正(秒)。音が遅れて聞こえる環境では負の値にする
-  // 難易度: win=判定幅倍率 / cpu=CPUの精度(0〜1) / spd=CPU基本速度倍率 / item=CPUのアイテム使用待ち(秒)
-  DIFF:{easy:{name:'イージー',win:1.35,cpu:[.62,.57,.52,.47,.43,.38,.33],spd:.99,item:[7,8]},
-        normal:{name:'ノーマル',win:1,cpu:[.9,.84,.78,.72,.66,.6,.54],spd:1,item:[3,6]},
-        hard:{name:'ハード',win:.88,cpu:[.98,.95,.92,.89,.86,.83,.8],spd:1.03,item:[2,3]}},
+  // 難易度: win=判定幅倍率 / cpu=CPUの上手さ(0〜1) / item=CPUのアイテム使用待ち(秒)
+  // CPUはプレイヤーと同じ速度式・同じ判定ルールで走る。強さはジャンプのタイミング精度・レーン変更の判断・アイテム使用だけで決まる。
+  CPU:{sigMax:.17,sigMin:.02,sigPow:1.3,forget:.08,reactEarly:.12,reactLate:.30,reactNoise:.12,skip2:.5},
+  DIFF:{easy:{name:'イージー',win:1.35,cpu:[.58,.53,.48,.43,.38,.33,.28],item:[7,8]},
+        normal:{name:'ノーマル',win:1,cpu:[.78,.7,.62,.55,.48,.42,.36],item:[3,6]},
+        hard:{name:'ハード',win:.88,cpu:[.98,.95,.92,.89,.86,.83,.8],item:[2,3]}},
   COOLDOWN:0.35,      // 直前の駅でイベントがあった場合の発生確率係数
   TIER_GAP:[0,3,2,1,1], TIER_VAL:[0,1,1.25,1.6,2.4],
   RAW:'https://raw.githubusercontent.com/shirotetsu-shiojima/seiyo_map/main/',
@@ -460,7 +462,7 @@ function startRace(course,diff,opts){
   const rn=mulberry32(course.seed^77);
   G.cpus=[];let ci=0;
   slots.forEach((sl,k)=>{if(k===meIdx)return;const isCpu=sl.kind==='cpu',idx=ci;if(isCpu)ci++;
-    G.cpus.push({id:sl.id,n:sl.name,c:sl.color||'#9aa7b8',remote:!!opts&&(sl.kind==='human'||!Net.isHost),a:isCpu?DF().cpu[idx%DF().cpu.length]:.8,spd:DF().spd,s:s0(k),v:0,lane:lane0(k),lanePos:lane0(k),combo:0,boostA:0,missT:0,ptr:0,next:0,perf:0,secPerf:[],fin:null,item:null,useAt:0,boostT:0,hitT:0,jam:0,inField:false,avoid:new Set(),laneT:lane0(k),r:mulberry32(course.seed^(1000+k)),pts:0,jh:0,net:null})});
+    G.cpus.push({id:sl.id,n:sl.name,c:sl.color||'#9aa7b8',remote:!!opts&&(sl.kind==='human'||!Net.isHost),a:isCpu?DF().cpu[idx%DF().cpu.length]:.8,s:s0(k),v:0,lane:lane0(k),lanePos:lane0(k),combo:0,boostA:0,missT:0,ptr:0,next:0,perf:0,secPerf:[],fin:null,item:null,useAt:0,boostT:0,hitT:0,jam:0,inField:false,avoid:new Set(),done:new WeakSet(),skip:new WeakSet(),rc:new WeakMap(),jump:null,jp:null,jamEnd:-9,jh:0,laneT:lane0(k),r:mulberry32(course.seed^(1000+k)),pts:0,net:null})});
   $('#bLeave').classList.toggle('hidden',!opts);$('#bPause').classList.toggle('hidden',!!opts);
   $('#ui-menu').classList.add('hidden');$('#ui-result').classList.add('hidden');$('#ui-hud').classList.remove('hidden');
   $('#touch').classList.toggle('hidden',!('ontouchstart' in window));$('#touch').classList.remove('chart');
@@ -529,7 +531,7 @@ function applyJudge(c,j,wx){
   else{G.combo++;G.maxCombo=Math.max(G.maxCombo,G.combo);const mul=(1+Math.min(G.combo,100)/100);G.score+=Math.round(CFG.SCORE[J]*c.val*mul);sfx.j[J]()}
   G.pop={txt:JNAME[J],col:JCOL[J],t:G.t,combo:G.combo};
   if(J>0)burst(c,J)}
-function burst(c,J){const C=G.course,h=c.kind==='note'?1.2:CFG.COIN_H;const p=posAt(c.s,(c.lane-1.5)*CFG.LANE_W,h);
+function burst(c,J){const C=G.course,h=c.kind==='note'?1.2:c.kind==='b'?1.0:CFG.COIN_H;const p=posAt(c.s,(c.lane-1.5)*CFG.LANE_W,h);
   for(let i=0;i<10;i++)G.particles.push({x:p.x,y:p.y,z:p.z,vx:(Math.random()-.5)*8,vy:Math.random()*6+2,vz:(Math.random()-.5)*8,t:0,life:.5,col:JCOL[J]})}
 function judgeDt(dtAbs){const w=CFG.WIN,m=winMul();return dtAbs<=w.P*m?3:dtAbs<=w.G*m?2:dtAbs<=w.O*m?1:0}
 
@@ -542,8 +544,15 @@ function resolveApex(){
   const lane=Math.abs(G.lanePos-G.laneT)<.5?G.laneT:Math.round(G.lanePos);
   const coins=G.course.coins;let best=null,bd=9;
   const i0=lowerBound(coins,G.s-G.v*.3);
-  for(let i=i0;i<coins.length&&coins[i].s<G.s+G.v*.3;i++){const c=coins[i];if(c.state!==0||c.lane!==lane||c.kind==='note')continue;const dt=Math.abs(c.s-G.s)/Math.max(G.v,10);if(dt<bd){bd=dt;best=c}}
+  for(let i=i0;i<coins.length&&coins[i].s<G.s+G.v*.3;i++){const c=coins[i];if(c.state!==0||c.lane!==lane||c.kind==='note'||c.kind==='b')continue;const dt=Math.abs(c.s-G.s)/Math.max(G.v,10);if(dt<bd){bd=dt;best=c}}
   if(best&&bd<=0.26)applyJudge(best,judgeDt(bd),bd)}
+function jumpH(){return G.jump?Math.sin(clamp((G.t-G.jump.t0)/CFG.JUMP_SEC,0,1)*Math.PI)*CFG.JUMP_H:0}
+// 地上のボーナスコイン: ジャンプせずにレーンを合わせて通過すれば取れる(ジャンプ中は上を飛び越えてしまう)
+function collectGround(sPrev){
+  if(G.chart)return;const coins=G.course.coins,lane=Math.abs(G.lanePos-G.laneT)<.5?G.laneT:Math.round(G.lanePos);
+  for(let i=lowerBound(coins,sPrev-.01);i<coins.length&&coins[i].s<=G.s;i++){const c=coins[i];if(c.kind!=='b'||c.state!==0||c.s<=sPrev)continue;
+    if(c.lane===Math.round(lane)&&jumpH()<GROUND_H)applyJudge(c,3,0)}}
+const GROUND_H=.9;
 function chartHit(lane){
   if(!G.chart||G.countdown>0)return;
   const coins=G.course.coins;let best=null,bd=9;const i0=lowerBound(coins,G.s-G.v*.3);
@@ -604,7 +613,12 @@ function cpuCombat(c,dt){
   c.hitT=Math.max(0,c.hitT-dt);c.jam=Math.max(0,c.jam-dt);c.boostT=Math.max(0,c.boostT-dt);c.inField=false;
   for(const f of G.fields){if(f.owner===c||c.s<f.s0||c.s>f.s1||Math.round(c.lanePos)!==f.lane||c.avoid.has(f))continue;
     if(c.item&&c.item.id==='shield'){c.item=null;c.avoid.add(f);continue}c.inField=true}
-  if(c.item&&c.item.id!=='shield'&&!G.finished&&G.t>=c.useAt){const it=c.item;c.item=null;useItemFor(c,it)}}
+  if(c.item&&c.item.id!=='shield'&&!G.finished&&G.t>=c.useAt){const it=c.item;
+    // 上手いCPUは使いどころを選ぶ: 先頭ならミサイル/ジャミングを温存、妨害フィールドは後続が近い時に置く
+    const lead=!G.cpus.some(o=>o!==c&&o.s>c.s)&&G.s<=c.s;
+    const near=[G.s,...G.cpus.filter(o=>o!==c).map(o=>o.s)].some(s=>s<c.s&&c.s-s<90);
+    if(c.a>.5&&(c.defer|0)<4&&((it.id==='missile'||it.id==='jam')&&lead||it.id==='field'&&!near)){c.defer=(c.defer|0)+1;c.useAt=G.t+1.5}
+    else{c.item=null;c.defer=0;useItemFor(c,it)}}}
 
 /* ---------- 更新 ---------- */
 function update(dt){
@@ -620,8 +634,8 @@ function update(dt){
   G.win=Math.max(0,G.win-dt);G.hitT=Math.max(0,G.hitT-dt);if(G.jam>0&&G.jam-dt<=0)G.jamEndT=G.t;G.jam=Math.max(0,G.jam-dt);G.missT=Math.max(0,G.missT-dt);G.boostA*=Math.exp(-dt/18);
   // 速度
   const tgt=CFG.VNOM*(1+G.boostA+Math.min(G.combo,60)*.0015+(G.itemT.turbo>0?IT.boostAdd:0)+(G.win>0?.2:0))*(G.missT>0?.84:1)*(G.hitT>0?IT.stunMul:1)*(G.inField?IT.fieldMul:1);
-  G.v+=clamp(tgt-G.v,-30*dt,22*dt);G.s+=G.v*dt;
-  stepLane(dt);updateCombat(dt);jointTicks();
+  G.v+=clamp(tgt-G.v,-30*dt,22*dt);const sPrev=G.s;G.s+=G.v*dt;
+  stepLane(dt);collectGround(sPrev);updateCombat(dt);jointTicks();
   if(G.jump&&G.t>=G.jump.t0+CFG.JUMP_SEC)G.jump=null;
   resolveApex();
   // 駅通過
@@ -650,19 +664,39 @@ function update(dt){
   for(const p of G.particles){p.t+=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy-=14*dt;p.z+=p.vz*dt}G.particles=G.particles.filter(p=>p.t<p.life);
   G.banners=G.banners.filter(b=>G.t-b.t0<b.dur)}
 function stepLane(dt){const d=G.laneT-G.lanePos;const st=CFG.LANE_SPEED*dt;G.lanePos=Math.abs(d)<=st?G.laneT:G.lanePos+Math.sign(d)*st}
+function randn(c){const u=Math.max(1e-9,c.r()),v=c.r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function cpuSig(c){const K=CFG.CPU;return K.sigMin+K.sigMax*Math.pow(1-c.a,K.sigPow)}
+function cpuJudge(c,j){if(j===0){c.mc=(c.mc|0)+1;c.combo=0;c.missT=1.3}else{c.combo++;if(j===3)c.perf++}}
 function stepCpu(c,dt){
-  const C=G.course;if(c.fin!==null)return;
-  cpuCombat(c,dt);
-  const tgt=CFG.VNOM*c.spd*(.97+.05*c.a)*(1+c.boostA+Math.min(c.combo,60)*.0015+(c.boostT>0?IT.boostAdd:0))*(c.missT>0?.84:1)*(c.hitT>0?IT.stunMul:1)*(c.inField?IT.fieldMul:1);
-  c.v+=clamp(tgt-c.v,-30*dt,22*dt);c.s+=c.v*dt;c.boostA*=Math.exp(-dt/18);c.missT=Math.max(0,c.missT-dt);
-  while(c.next<C.stations.length-1&&c.s>=C.stations[c.next+1].s){c.next++;const P=C.plan[c.next];if(P&&P.base==='speedup')c.boostA=Math.max(c.boostA,P.up);if(P&&P.event==='roulette'&&!c.item){c.item=ITEMS[Math.floor(c.r()*ITEMS.length)];c.useAt=G.t+DF().item[0]+c.r()*DF().item[1]}}
-  const coins=C.coins;
-  while(c.ptr<coins.length&&coins[c.ptr].s<=c.s){const cn=coins[c.ptr++];if(cn.ls)continue;
-    const x=c.r();let j;const a=c.a;const pm=.03+.4*(1-a)*(1-a)*2+(c.jam>0?.25:0),pp=a*a*.8;
-    j=x<pm?0:x<pm+(1-pm)*(1-pp)*.35?1:x<1-pp?2:3;
-    if(j===0){c.combo=0;c.missT=1.3}else{c.combo++;if(j===3)c.perf++}}
-  // レーン見た目: 次のコインへ
-  let nl=c.lane;for(let i=c.ptr;i<Math.min(coins.length,c.ptr+4);i++){if(!coins[i].ls&&coins[i].s-c.s<120){nl=coins[i].lane;break}}if(!(c.jam>0))c.laneT=nl;const d=c.laneT-c.lanePos,st=4*dt;c.lanePos=Math.abs(d)<=st?c.laneT:c.lanePos+Math.sign(d)*st;
+  const C=G.course,K=CFG.CPU,coins=C.coins;if(c.fin!==null)return;
+  cpuCombat(c,dt);if(c.jam>0)c.jamEnd=G.t+c.jam;
+  // 速度: プレイヤーと完全に同じ式(速度倍率の優遇なし)
+  const tgt=CFG.VNOM*(1+c.boostA+Math.min(c.combo,60)*.0015+(c.boostT>0?IT.boostAdd:0))*(c.missT>0?.84:1)*(c.hitT>0?IT.stunMul:1)*(c.inField?IT.fieldMul:1);
+  c.v+=clamp(tgt-c.v,-30*dt,22*dt);const sPrev=c.s;c.s+=c.v*dt;c.boostA*=Math.exp(-dt/18);c.missT=Math.max(0,c.missT-dt);
+  while(c.next<C.stations.length-1&&c.s>=C.stations[c.next+1].s){c.next++;const P=C.plan[c.next];if(P&&P.base==='speedup')c.boostA=Math.max(c.boostA,P.up);if(P&&P.event==='roulette'&&!c.item){c.item=ITEMS[Math.floor(c.r()*ITEMS.length)];c.useAt=G.t+(DF().item[0]+c.r()*DF().item[1])*(1.6-c.a);c.defer=0}}
+  const vv=Math.max(c.v,15),sig=cpuSig(c);
+  // --- レーン判断: 次に取るコインのレーンへ、移動に必要な時間+(上手さ依存の余裕)で動き出す。下手なほど遅れて間に合わない ---
+  let tg=null;for(let i=lowerBound(coins,c.s+1.5);i<coins.length&&coins[i].s<c.s+c.v*3;i++){const q=coins[i];if(q.ls||q.kind==='note'||c.done.has(q)||c.skip.has(q))continue;tg=q;break}
+  if(tg&&!(c.jam>0)){const dl=Math.abs(tg.lane-Math.round(c.laneT));
+    if(dl>0){let r=c.rc.get(tg);if(r===undefined){r=K.reactEarly*c.a-K.reactLate*(1-c.a)+randn(c)*K.reactNoise*(1-c.a);c.rc.set(tg,r);if(dl>=2&&c.r()<K.skip2*(1-c.a))c.skip.add(tg)}
+      if(!c.skip.has(tg)&&(tg.s-c.s)/vv<=dl/CFG.LANE_SPEED+r)c.laneT=tg.lane}}
+  {const d=c.laneT-c.lanePos,st=CFG.LANE_SPEED*dt;c.lanePos=Math.abs(d)<=st?c.laneT:c.lanePos+Math.sign(d)*st}
+  // --- ジャンプ: 次のジャンプ対象コインの頂点が来る時刻を狙って跳ぶ(誤差=上手さ) ---
+  let jc=null;for(let i=lowerBound(coins,c.s-c.v*.3);i<coins.length&&coins[i].s<c.s+c.v*1.5;i++){const q=coins[i];if(q.ls||q.kind==='note'||q.kind==='b'||c.done.has(q))continue;jc=q;break}
+  if(jc&&(!c.jp||c.jp.coin!==jc)){const tt=(jc.s-c.s)/vv;if(tt<CFG.JUMP_SEC/2+.4)c.jp={coin:jc,t0:c.r()<K.forget*(1-c.a)?1e9:G.t+tt-CFG.JUMP_SEC/2+randn(c)*sig}}
+  if(c.jp&&!c.jump&&G.t>=c.jp.t0&&G.t<c.jp.t0+.6){c.jump={t0:G.t,apex:G.t+CFG.JUMP_SEC/2,done:false};c.jp=null}
+  if(c.jump){if(G.t>=c.jump.t0+CFG.JUMP_SEC){c.jump=null;c.jh=0}else c.jh=Math.sin(clamp((G.t-c.jump.t0)/CFG.JUMP_SEC,0,1)*Math.PI)*CFG.JUMP_H}else c.jh=0;
+  // 頂点での判定(プレイヤーと同じルール)
+  if(c.jump&&!c.jump.done&&G.t>=c.jump.apex){c.jump.done=true;const lane=Math.abs(c.lanePos-c.laneT)<.5?c.laneT:Math.round(c.lanePos);let best=null,bd=9;
+    for(let i=lowerBound(coins,c.s-c.v*.3);i<coins.length&&coins[i].s<c.s+c.v*.3;i++){const q=coins[i];if(q.ls||q.state===undefined||c.done.has(q)||q.lane!==lane||q.kind==='note'||q.kind==='b')continue;const dtt=Math.abs(q.s-c.s)/vv;if(dtt<bd){bd=dtt;best=q}}
+    if(best&&bd<=.26){c.done.add(best);cpuJudge(c,judgeDt(bd))}}
+  // 地上のボーナスコイン / 譜面ノーツ / 取り逃し
+  for(let i=lowerBound(coins,sPrev-c.v*.6-2);i<coins.length&&coins[i].s<c.s+1;i++){const q=coins[i];if(q.ls||c.done.has(q))continue;
+    if(q.kind==='b'&&q.s>sPrev&&q.s<=c.s&&Math.round(c.lanePos)===q.lane&&c.jh<GROUND_H){c.done.add(q);cpuJudge(c,3);continue}
+    if(q.kind==='note'&&q.s<=c.s){c.done.add(q);cpuJudge(c,c.r()<K.forget*(1-c.a)?0:judgeDt(Math.abs(randn(c))*sig*1.1));continue}
+    if(q.s<c.s-c.v*CFG.WIN.O*winMul()-.5){c.done.add(q);
+      if(q.kind!=='note'&&(c.jam>0||G.t-c.jamEnd<.6)&&Math.round(c.laneT)!==q.lane)continue; // ジャミングで届かなかった他レーンは無視(プレイヤーと同じ)
+      cpuJudge(c,0)}}
   if(c.s>=C.goalS){c.fin=G.t-(C.goalS-c.s)/c.v}}
 
 function finish(){
@@ -830,7 +864,7 @@ let _stCache=null;
 function stationAt(s){const C=G.course;for(let k=0;k<C.stations.length;k++){const S=C.stations[k];if(s>=S.p0-1&&s<S.p1)return k}return -1}
 function drawItem(it){
   const C=G.course,LW=CFG.LANE_W;
-  if(it.t==='coin'){const c=it.c;const p=posAt(c.s,(c.lane-1.5)*LW,0,{});const h=c.kind==='note'?1.1:CFG.COIN_H;
+  if(it.t==='coin'){const c=it.c;const p=posAt(c.s,(c.lane-1.5)*LW,0,{});const h=c.kind==='note'?1.1:c.kind==='b'?1.0:CFG.COIN_H;
     const q=P(p.x,p.y+h,p.z);if(q.z<NEAR)return;const d=q.z,fk=fogf(d);ctx.globalAlpha=1-fk*.7;
     if(c.kind==='note'){ // 譜面ノーツ
       const lc=['#ff6b8a','#ffd34d','#4cc9ff','#7be07b'][c.lane];const a=P(p.x-p.rx*LW*.4,p.y+h,p.z-p.rz*LW*.4),b=P(p.x+p.rx*LW*.4,p.y+h,p.z+p.rz*LW*.4);
@@ -849,7 +883,7 @@ function drawItem(it){
     ctx.fillStyle=GRADE_COL[S.grade];ctx.fillRect(top.x-bw/2+2,top.y-bh+2,Math.max(4,bw*.16),bh-4);
     ctx.fillStyle='#16202e';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font=`800 ${Math.max(8,bh*.5)}px "Hiragino Sans","Noto Sans JP","Noto Sans CJK JP",sans-serif`;ctx.fillText(S.name,top.x+bw*.06,top.y-bh/2,bw*.76);
     ctx.globalAlpha=1;return}
-  if(it.t==='cpu'){const c=it.c;drawTrain(c.s,(c.lanePos-1.5)*LW,c.jh||0,hex2rgb(c.c),.62,2);shieldRing(c.s-6,(c.lanePos-1.5)*LW,2.2,c.item);return}
+  if(it.t==='cpu'){const c=it.c;{const sh=posAt(c.s-8,(c.lanePos-1.5)*LW,0,{});const q=P(sh.x,sh.y+.05,sh.z);if(q.z>NEAR){ctx.fillStyle='rgba(0,0,0,.22)';ctx.beginPath();ctx.ellipse(q.x,q.y,2*FOC/q.z,.5*FOC/q.z,0,0,7);ctx.fill()}}drawTrain(c.s,(c.lanePos-1.5)*LW,c.jh||0,hex2rgb(c.c),.62,2);shieldRing(c.s-6,(c.lanePos-1.5)*LW,2.2,c.item);return}
   if(it.t==='field'){const f=it.f,a0=Math.max(f.s0,G.camS+4),a1=Math.min(f.s1,G.camS+DRAWD);if(a1<=a0)return;const c0=(f.lane-1.5)*LW,w=LW/2-.1;
     const pa=posAt(a0,0,0,{}),pb=posAt(a1,0,0,{}),q=(p,l)=>P(p.x+p.rx*l,p.y+.12,p.z+p.rz*l);
     poly([q(pa,c0-w),q(pa,c0+w),q(pb,c0+w),q(pb,c0-w)],`rgba(190,60,255,${.35+.15*Math.sin(G.t*8)})`);
@@ -1081,7 +1115,7 @@ function beginOnlineRace(m){
 function netTick(){
   if(!G.online)return;const now=performance.now();if(now-Net.lastSend<100)return;Net.lastSend=now;Net.tickN++;
   if(!G.finished)Net.send({k:'state',id:Net.id,s:+G.s.toFixed(2),v:+G.v.toFixed(2),l:+G.lanePos.toFixed(2),ji:G.jump?+(G.t-G.jump.t0).toFixed(3):-1,item:G.item?G.item.id:null,hit:G.hitT>0?1:0,jam:G.jam>0?1:0,perf:G.cnt[3],sc:G.score});
-  if(Net.isHost){Net.send({k:'cpus',list:G.cpus.filter(c=>!c.remote).map(c=>({id:c.id,s:+c.s.toFixed(2),v:+c.v.toFixed(2),l:+c.lanePos.toFixed(2),item:c.item?c.item.id:null,hit:c.hitT>0?1:0,jam:c.jam>0?1:0,perf:c.perf,fin:c.fin}))});
+  if(Net.isHost){Net.send({k:'cpus',list:G.cpus.filter(c=>!c.remote).map(c=>({id:c.id,s:+c.s.toFixed(2),v:+c.v.toFixed(2),l:+c.lanePos.toFixed(2),ji:c.jump?+(G.t-c.jump.t0).toFixed(3):-1,item:c.item?c.item.id:null,hit:c.hitT>0?1:0,jam:c.jam>0?1:0,perf:c.perf,fin:c.fin}))});
     if(Net.tickN%20===0&&Net.room){Net.room.prog=Math.max(0,Math.min(100,Math.round((G.s-G.course.startS)/G.course.dist*100)));Net.tp.lobby.publish(Net.room)}}}
 function applyNetState(m){
   const list=m.k==='cpus'?m.list:[m];
